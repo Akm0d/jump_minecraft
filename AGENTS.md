@@ -30,7 +30,23 @@ its source rather than relying solely on `analysis.md`.
 - `tools/test_flight_relay.py`: relay integration test; set `POWERSHELL` when
   PowerShell is not on `PATH`.
 - `analysis.md`: source-backed architecture and feasibility investigation.
+- `ROADMAP.md`: ordered milestones and the authoritative record of what has and
+  has not been verified end to end.
 - `README.md`: operator, installation, testing, and recovery instructions.
+
+## Current priority
+
+Follow `ROADMAP.md` in milestone order. The active milestone is **P0 — First
+complete Minecraft flight (before visiting the bay)**. The Windows installer
+and relay were committed to `main` in `6da9b09`, but neither a successful live
+Paper deployment nor a Windows/Vivecraft/SteamVR run has been demonstrated.
+
+Before requesting deployment, confirm the intended source revision, rebuild the
+JAR, run all required tests, record its SHA-256, and prepare exact backup and
+rollback commands. Then report findings and proposed next steps. Do not skip to
+P1/P2 work merely because it can be tested without the live Paper milestone.
+Never mark a roadmap checkbox complete without direct evidence, and distinguish
+observed results from inferred or previously reported results.
 
 ## Required validation
 
@@ -127,6 +143,14 @@ Do not restart or reconfigure the live Paper/LinuxGSM server, modify its world,
 change Tailscale or Playit, start synthetic player movement, or deploy a plugin
 without explicit authorization. Do not bypass any JUMP hardware safety
 interlock. Keep Unreal and Minecraft mutually exclusive for a flight session.
+
+For an authorized P0 deployment, inspect the target first, preserve any existing
+plugin JAR with a timestamped backup, document the exact rollback path, and use
+LinuxGSM for a clean stop/start rather than Paper `/reload`. Inspect the actual
+startup log and verify command registration before asking an operator to connect.
+Never start the synthetic sender until a test player is connected and explicitly
+armed. Exercise landed, disarm, stale-stream, and disconnect restoration during
+the controlled test, without changing the world or adding gameplay features.
 
 Commit and push only when the user explicitly authorizes it. Preserve unrelated
 working-tree changes, use non-destructive Git operations, and report the commit,

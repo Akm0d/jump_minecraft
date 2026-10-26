@@ -13,7 +13,7 @@ Let a person wearing the JUMP wingsuit fly through an existing Minecraft Java wo
 - [x] Implement a deterministic synthetic FLIGHT sender and unit/controller tests.
 - [x] Build against the **real** Paper API `26.3.build.224-stable` with the checked-in Gradle wrapper; reported validation: 9 JUnit tests, 36 core assertions, and 4 Python tests passing.
 - [x] Implement Windows `scripts/install_client.ps1` and optional private `scripts/flight_udp_relay.ps1`; reported PowerShell parsing, metadata dry-run, and relay integration tests passing.
-- [ ] Confirm the Windows scripts and latest documentation are committed/pushed to `main` (Codex reported these changes remained uncommitted).
+- [x] Confirm the Windows scripts and latest documentation are committed/pushed to `main` (`6da9b09`).
 - [ ] Deploy the plugin to the live Paper server on `begula` and verify startup. **Not performed yet.**
 - [ ] Test the installer and actual Minecraft/Vivecraft/SteamVR startup on a Windows machine. **Not performed yet.**
 
@@ -37,7 +37,7 @@ A green build is not evidence of successful live flight or headset compatibility
 
 **Objective:** a technician can prepare a Windows bay workstation without hand-installing each component.
 
-- [ ] Commit/review the Windows scripts and README from the Codex worktree without accidentally including generated files, caches, credentials, or binaries.
+- [x] Commit/review the Windows scripts and README from the Codex worktree without accidentally including generated files, caches, credentials, or binaries (`6da9b09`).
 - [ ] Run `install_client.ps1 -DryRun` and then a real installation on Windows x64; verify official launcher sign-in, dedicated Fabric profile, Vivecraft version, private Java runtime if needed, and repeat-run idempotency.
 - [ ] Determine the real Playit hostname and decide whether to persist it as a documented/repository default; currently `-MinecraftServer` is **mandatory**, so bare `install_client.ps1` is not yet zero-argument.
 - [ ] Verify ordinary Minecraft connection and synthetic movement before enabling Vivecraft/SteamVR.
