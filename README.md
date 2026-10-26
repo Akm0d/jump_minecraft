@@ -285,6 +285,14 @@ Automated tests:
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 ```
 
+The relay integration test runs automatically when `pwsh` or `powershell.exe`
+is available. On Linux, point it at a portable PowerShell explicitly if needed:
+
+```bash
+POWERSHELL=/path/to/pwsh \
+  python3 -m unittest -v tools/test_flight_relay.py
+```
+
 ## Connecting the real Windows FLIGHT engine
 
 JUMP GameModule binds a local address; it does not initiate a connection to
@@ -355,47 +363,177 @@ Subscription heartbeat:
 The plugin sends no launch, landing, reset, calibration, collision, or physics
 commands.
 
-## Minecraft Java Edition 26.3 client
+## One-command Windows VR client setup
 
-1. Install the official [Minecraft Launcher](https://www.minecraft.net/download).
-2. Sign in with the licensed Microsoft account.
-3. Create or select a Java Edition installation for exactly Minecraft 26.3.
-4. Launch it once unmodified and confirm it can join Paper.
-5. In Multiplayer, add Paper's authorized LAN/Tailscale address and normal
-   Minecraft port, usually 25565.
+Run the installer from a Windows x64 PowerShell terminal in this repository:
 
-The Minecraft and FLIGHT connections are separate: the client connects to
-Paper, while the Paper plugin connects to FLIGHT.
+```powershell
+Unblock-File .\scripts\install_client.ps1, .\scripts\flight_udp_relay.ps1
+.\scripts\install_client.ps1 `
+  -MinecraftServer "PUBLIC_PLAYIT_HOSTNAME" `
+  -FlightHost "127.0.0.1" `
+  -FlightPort 1201
+```
 
-## Fabric and Vivecraft 26.3 client
+`MinecraftServer` is the address entered in Minecraft Multiplayer. It may be a
+Playit hostname and optional port, but must not include `https://` or a path.
+`FlightHost` is a completely separate UDP endpoint used by the Paper plugin or
+the optional private relay. Never use the public Minecraft/Playit hostname as a
+FLIGHT endpoint.
 
-Vivecraft is optional. Validate the bridge with a standard desktop client first.
+The installer:
 
-Official projects:
+- accepts only x64 Windows and reports the detected OS and architecture;
+- verifies Minecraft 26.3 against Mojang's release manifest;
+- verifies Fabric Loader 0.20.1 and Fabric Installer 1.1.2 through Fabric's
+  official metadata service;
+- verifies the official Vivecraft 26.3-1.3.17 Fabric asset and SHA-256;
+- installs the official launcher with `winget` if needed, without embedding
+  credentials or bypassing Microsoft authentication;
+- finds Java 25 or installs a private, checksum-verified Temurin 25 runtime
+  under `%LOCALAPPDATA%\JUMP Minecraft` without elevation;
+- installs Fabric with `-noprofile`, then adds only its own launcher entry;
+- creates `JUMP Minecraft VR (26.3)` with an isolated game directory at
+  `%LOCALAPPDATA%\JUMP Minecraft\profiles\26.3-vr`;
+- installs only the Vivecraft Fabric JAR. This release embeds the Fabric API
+  modules it requires, so the installer does not add a separate Fabric API;
+- detects SteamVR/OpenVR and reports whether `vrserver` is running; and
+- saves nonsecret settings in `jump-client.json` and connection instructions in
+  `README.txt` inside the isolated profile.
 
-- [Fabric installer](https://fabricmc.net/use/installer/)
-- [Fabric documentation](https://docs.fabricmc.net/)
-- [Vivecraft downloads](https://www.vivecraft.org/downloads/)
-- [Vivecraft source and releases](https://github.com/Vivecraft/VivecraftMod)
+After a successful interactive install, the script opens the official launcher.
+It does not launch a game instance, select a Microsoft account, or bypass the
+normal Play button. `-NonInteractive`, `-DryRun`, and `-ValidateOnly` do not
+open it.
 
-Installation outline:
+The launcher package is installed through winget package
+`Mojang.MinecraftLauncher`. The script does not request elevation itself;
+winget or the official launcher may display their normal Windows prompts.
 
-1. Download the official Fabric Installer for Windows. Close Minecraft and its
-   launcher, run the installer, select Minecraft 26.3, and keep `Create Profile`
-   selected.
-2. Start the generated Fabric profile once, then close Minecraft.
-3. Download the current 26.3 Vivecraft release from the official releases page.
-   Release `26.3-1.3.17` is the current official release observed on
-   2026-10-26; use its
-   Fabric asset and follow the release's dependency list rather than guessing.
-   Do not use a Forge or NeoForge asset in a Fabric profile.
-4. Put the exact 26.3 Vivecraft mod and dependencies listed by that official
-   release into the profile's `mods` directory.
-5. Launch Fabric, confirm Vivecraft loads, and test joining Paper before using
-   the physical rig.
+The Fabric version and libraries remain in the launcher's shared Minecraft
+home, but mods, saves, configuration, screenshots, and logs remain in the JUMP
+profile directory. Before editing launcher profiles, the installer creates a
+timestamped backup. It owns only the profile ID `jump-minecraft-vr-26-3` and
+refuses to replace that ID if it belongs to another profile.
 
-Do not assume Fabric API or another dependency is required or optional; follow
-the selected official Vivecraft release's dependency list.
+If the launcher has never run, the installer opens it and pauses. Sign in with
+the licensed Microsoft account, let the launcher initialize, close it fully,
+and return to PowerShell. Authentication remains in the official launcher.
+
+Useful modes:
+
+```powershell
+# Show downloads and changes without writing anything.
+.\scripts\install_client.ps1 -MinecraftServer "PUBLIC_PLAYIT_HOSTNAME" -DryRun
+
+# Verify an existing installation without repairing it.
+.\scripts\install_client.ps1 -MinecraftServer "PUBLIC_PLAYIT_HOSTNAME" -ValidateOnly
+
+# Re-download verified managed artifacts and rerun the idempotent setup.
+.\scripts\install_client.ps1 -MinecraftServer "PUBLIC_PLAYIT_HOSTNAME" -Repair
+```
+
+Repeated normal runs preserve unrelated profiles and user files. `-Repair`
+refreshes only installer-managed downloads and the dedicated JUMP profile.
+
+### Launch and connect
+
+1. Start SteamVR and verify the headset and controllers in SteamVR Home.
+2. Open the official Minecraft Launcher.
+3. Select `JUMP Minecraft VR (26.3)` and click Play.
+4. In Multiplayer, choose Add Server and enter the exact address printed by the
+   installer, for example `PUBLIC_PLAYIT_HOSTNAME` or `host.example:port`.
+5. Join with a normal desktop view first. Enable VR only after the unmodified
+   server connection succeeds.
+
+The installer intentionally does not edit `servers.dat`, launcher credentials,
+or undocumented auto-connect settings. The multiplayer address is printed and
+saved for the technician instead.
+
+### Manual recovery
+
+If automated installation stops:
+
+1. Install the [official Minecraft Launcher](https://www.minecraft.net/download),
+   sign in, then close it completely.
+2. Install Fabric Loader 0.20.1 for Minecraft 26.3 using the
+   [official Fabric installer](https://fabricmc.net/use/installer/).
+3. In Launcher > Java Edition > Installations, create or edit a profile named
+   `JUMP Minecraft VR (26.3)`, select
+   `fabric-loader-0.20.1-26.3`, and set Game Directory to
+   `%LOCALAPPDATA%\JUMP Minecraft\profiles\26.3-vr`.
+4. Put `vivecraft-26.3-1.3.17-fabric.jar` from the
+   [official Vivecraft release](https://github.com/Vivecraft/VivecraftMod/releases/tag/26.3-1.3.17)
+   into that directory's `mods` folder.
+5. Do not add Forge/NeoForge assets or an arbitrary Fabric API version.
+
+Launcher profile backups are stored beside the original profile JSON with a
+`.jump-backup-<UTC timestamp>` suffix. Restoring one requires closing the
+launcher, preserving the current file separately, and copying the desired
+backup back to its original filename.
+
+## Optional private FLIGHT UDP relay
+
+This is required only when FLIGHT stays bound to `127.0.0.1` and Paper runs on
+another machine. Directly configuring FLIGHT to bind an authorized private
+address avoids the relay, but may be inappropriate for the production rig and
+desktop mode explicitly rejects a non-loopback game bind. The relay does not
+modify FLIGHT.
+
+Configure it during client setup with the Windows machine's private/Tailscale
+IPv4 and Paper's private/Tailscale IPv4:
+
+```powershell
+.\scripts\install_client.ps1 `
+  -MinecraftServer "PUBLIC_PLAYIT_HOSTNAME" `
+  -FlightHost "127.0.0.1" `
+  -FlightPort 1201 `
+  -RelayListenAddress "100.70.80.90" `
+  -RelayListenPort 12100 `
+  -RelayAllowedPaperAddress "100.64.20.30"
+
+.\scripts\flight_udp_relay.ps1 `
+  -ConfigPath "$env:LOCALAPPDATA\JUMP Minecraft\profiles\26.3-vr\flight-relay.json"
+```
+
+Then configure the Paper plugin's `flight.host` as `100.70.80.90` and
+`flight.port` as `12100` during a separately authorized server maintenance
+window. Do not point Paper at the Playit hostname.
+
+The relay:
+
+- binds only to one explicit loopback, RFC1918, or Tailscale CGNAT IPv4 address;
+- refuses `0.0.0.0`, public addresses, IPv6, and an unspecified Paper source;
+- accepts one Paper source address and one active source port at a time;
+- forwards only valid three-field subscription heartbeats to FLIGHT;
+- returns FLIGHT datagrams to that exact subscriber from the configured relay
+  endpoint, preserving the endpoint expected by the plugin;
+- expires the subscriber when heartbeats stop; and
+- never fabricates or forwards launch, reset, calibration, readiness, landing,
+  collision, or other control commands.
+
+No firewall rule is created automatically. Permit relay UDP only between the
+two authorized private/Tailscale addresses; never expose ports 1201 or 12100 to
+Playit or the public Internet. Stop the foreground relay with `Ctrl+C`.
+
+Validate without opening sockets:
+
+```powershell
+.\scripts\flight_udp_relay.ps1 `
+  -ConfigPath "$env:LOCALAPPDATA\JUMP Minecraft\profiles\26.3-vr\flight-relay.json" `
+  -ValidateOnly
+```
+
+### Windows validation status
+
+The PowerShell scripts are syntax-checked with PowerShell 7, the installer dry
+run is exercised against the live Mojang, Fabric, Adoptium, and Vivecraft
+metadata services, and the relay has a loopback integration test covering
+bidirectional traffic, ordering, source isolation, control-message rejection,
+and expiry. The full launcher, SteamVR, headset, and Vivecraft startup flow has
+not yet been executed on a Windows JUMP station. Treat that behavior as
+unverified until the first controlled Windows test; use `-DryRun` first and
+retain the launcher's timestamped profile backup.
 
 ## SteamVR and headset setup
 
