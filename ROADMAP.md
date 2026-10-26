@@ -82,6 +82,19 @@ Begin only after P2 establishes a working end-to-end path.
 - [ ] Investigate intended landing-target API/ownership and how zones interact with `setLandingTarget` only after the actual bay landing behavior is understood.
 - [ ] Assess long-distance chunk preloading, world boundaries, terrain scaling, and multiplayer/spectator requirements based on observations.
 
+## Optional visual enhancements (candidates only, after P0 and P1)
+
+Suggestions only: nothing here is installed, and the installer and baseline Vivecraft profile stay unchanged until P0 synthetic flight and P1 VR testing pass. Each must keep JUMP physics authoritative and be tested for VR frame rate and Vivecraft compatibility. Compatibility is from Modrinth listings checked 2026-10-26.
+
+- **Sodium** — rendering optimization; client-only; no declared dependencies; Fabric 0.9.2 (release) / 0.9.3 (beta) for 26.3.
+- **Iris** — shader loader; client-only; requires Sodium; Fabric 1.11.7+26.3.
+- **Complementary Unbound** — shader pack; requires Iris; listed for 26.3. Goes in `shaderpacks`, not `mods`.
+- **Distant Horizons** — distant-terrain LOD rendering; client with optional server side; no declared dependencies; Fabric 3.3.4-26.3. No Paper server changes without approval.
+- **Better Blending** — not found under this name; closest match (Better Biome Reblend) lists only up to 1.21.11. Unverified for 26.3.
+- **Jodkas Smooth Terrain** — not found on Modrinth. Unverified.
+
+Before adoption: confirm Vivecraft compatibility and VR frame rate per item, one at a time, then update the installer only if they pass.
+
 ## Architecture and non-goals
 
 - **Authoritative flight:** JUMP FLIGHT; nominal physics 1000 Hz, GameModule frames ~90 Hz.

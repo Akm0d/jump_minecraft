@@ -472,6 +472,34 @@ Launcher profile backups are stored beside the original profile JSON with a
 launcher, preserving the current file separately, and copying the desired
 backup back to its original filename.
 
+### Optional visual enhancements (suggestions only)
+
+None of these are installed or managed by `install_client.ps1`, and the baseline
+Fabric + Vivecraft profile stays unchanged until P0 synthetic flight and P1 VR
+testing pass. Any future addition must leave JUMP FLIGHT as the authoritative
+physics source and be tested for VR frame rate and Vivecraft compatibility.
+Compatibility below was read from Modrinth listings on 2026-10-26; Vivecraft
+compatibility is not yet tested for any entry.
+
+| Item | Purpose | Runs on | Dependencies | Minecraft 26.3 |
+| --- | --- | --- | --- | --- |
+| Sodium | Faster rendering engine | Client only | None declared (Fabric) | Fabric 0.9.2 release; 0.9.3 is beta |
+| Iris | Shader-pack loader | Client only | Requires Sodium | Fabric 1.11.7+26.3 |
+| Complementary Unbound | Shader pack (realistic style) | Client only | Requires Iris | Listed for 26.3 |
+| Distant Horizons | Distant terrain via level-of-detail rendering | Client; optional server side | None declared (Fabric) | Fabric 3.3.4-26.3 |
+| Better Blending | Biome-blend smoothing | Unverified | Unverified | Not found under this name |
+| Jodkas Smooth Terrain | Smoother terrain visuals | Unverified | Unverified | Not found on Modrinth |
+
+Notes:
+
+- Shader packs such as Complementary Unbound go in the profile's
+  `shaderpacks` folder (zip, not unzipped), not `mods`. Mods go in `mods`.
+- Distant Horizons needs nothing on the Paper server for client-side use; do not
+  add server components to the live server without approval.
+- The closest match for "Better Blending" is Better Biome Reblend, which lists
+  versions only up to 1.21.11, so treat it as unavailable for 26.3. Confirm the
+  intended project and source for both unverified entries before use.
+
 ## Optional private FLIGHT UDP relay
 
 This is required only when FLIGHT stays bound to `127.0.0.1` and Paper runs on

@@ -110,27 +110,104 @@ function Invoke-TrustedDownload(
 }
 
 function Get-JavaMajor([string]$JavaPath) {
-    $output = (& $JavaPath -version 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'version\s+"(?<major>\d+)') {
+    # java -version writes to stderr, which Windows PowerShell 5.1 turns into terminating errors under Stop.
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $JavaPath
+    $info.Arguments = "-version"
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    $process = $null
+    try {
+        $process = [System.Diagnostics.Process]::Start($info)
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill() } catch { }
+            return 0
+        }
+        $output = $stdout.Result + "`n" + $stderr.Result
+        if ($process.ExitCode -ne 0 -or $output -notmatch 'version\s+"(?<major>\d+)') {
+            return 0
+        }
+        return [int]$Matches.major
+    } catch {
         return 0
+    } finally {
+        if ($process) { $process.Dispose() }
     }
-    return [int]$Matches.major
+}
+
+function Invoke-ExternalCommand([string]$FilePath, [string[]]$Arguments) {
+    # Streams output to the host and returns only the exit code, so callers' return values stay clean.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host "$_" }
+        return [int]$LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+# Compiled from a class that inits default TrustManagerFactory/KeyManagerFactory/SSLContext (Java 8 bytecode).
+$script:TlsProbeClassBase64 = "yv66vgAAADQATwoAAgADBwAEDAAFAAYBABBqYXZhL2xhbmcvT2JqZWN0AQAGPGluaXQ+AQADKClWCgAIAAkHAAoMAAsADAEAIWphdmF4L25ldC9zc2wvVHJ1c3RNYW5hZ2VyRmFjdG9yeQEAE2dldERlZmF1bHRBbGdvcml0aG0BABQoKUxqYXZhL2xhbmcvU3RyaW5nOwoACAAODAAPABABAAtnZXRJbnN0YW5jZQEANyhMamF2YS9sYW5nL1N0cmluZzspTGphdmF4L25ldC9zc2wvVHJ1c3RNYW5hZ2VyRmFjdG9yeTsHABIBABZqYXZhL3NlY3VyaXR5L0tleVN0b3JlCgAIABQMABUAFgEABGluaXQBABsoTGphdmEvc2VjdXJpdHkvS2V5U3RvcmU7KVYKABgACQcAGQEAH2phdmF4L25ldC9zc2wvS2V5TWFuYWdlckZhY3RvcnkKABgAGwwADwAcAQA1KExqYXZhL2xhbmcvU3RyaW5nOylMamF2YXgvbmV0L3NzbC9LZXlNYW5hZ2VyRmFjdG9yeTsKABgAHgwAFQAfAQAdKExqYXZhL3NlY3VyaXR5L0tleVN0b3JlO1tDKVYIACEBAANUTFMKACMAJAcAJQwADwAmAQAYamF2YXgvbmV0L3NzbC9TU0xDb250ZXh0AQAuKExqYXZhL2xhbmcvU3RyaW5nOylMamF2YXgvbmV0L3NzbC9TU0xDb250ZXh0OwoAGAAoDAApACoBAA5nZXRLZXlNYW5hZ2VycwEAHSgpW0xqYXZheC9uZXQvc3NsL0tleU1hbmFnZXI7CgAIACwMAC0ALgEAEGdldFRydXN0TWFuYWdlcnMBAB8oKVtMamF2YXgvbmV0L3NzbC9UcnVzdE1hbmFnZXI7CgAjADAMABUAMQEAVyhbTGphdmF4L25ldC9zc2wvS2V5TWFuYWdlcjtbTGphdmF4L25ldC9zc2wvVHJ1c3RNYW5hZ2VyO0xqYXZhL3NlY3VyaXR5L1NlY3VyZVJhbmRvbTspVgoAIwAzDAA0ADUBAApnZXREZWZhdWx0AQAcKClMamF2YXgvbmV0L3NzbC9TU0xDb250ZXh0OwkANwA4BwA5DAA6ADsBABBqYXZhL2xhbmcvU3lzdGVtAQADb3V0AQAVTGphdmEvaW8vUHJpbnRTdHJlYW07CAA9AQAGVExTX09LCgA/AEAHAEEMAEIAQwEAE2phdmEvaW8vUHJpbnRTdHJlYW0BAAdwcmludGxuAQAVKExqYXZhL2xhbmcvU3RyaW5nOylWBwBFAQAIVGxzUHJvYmUBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQAEbWFpbgEAFihbTGphdmEvbGFuZy9TdHJpbmc7KVYBAApFeGNlcHRpb25zBwBMAQATamF2YS9sYW5nL0V4Y2VwdGlvbgEAClNvdXJjZUZpbGUBAA1UbHNQcm9iZS5qYXZhACEARAACAAAAAAACAAEABQAGAAEARgAAAB0AAQABAAAABSq3AAGxAAAAAQBHAAAABgABAAAAAwAJAEgASQACAEYAAAB0AAQABAAAADy4AAe4AA1MKwHAABG2ABO4ABe4ABpNLAEBtgAdEiC4ACJOLSy2ACcrtgArAbYAL7gAMleyADYSPLYAPrEAAAABAEcAAAAmAAkAAAAFAAcABgAPAAcAFgAIABwACQAiAAoALwALADMADAA7AA0ASgAAAAQAAQBLAAEATQAAAAIATg=="
+
+function Test-JavaTls([string]$JavaPath) {
+    # Fabric's installer selects the Windows-ROOT trust store; runtimes without SunMSCAPI fail here.
+    $probeDir = Join-Path $script:CacheRoot "tls-probe"
+    try {
+        New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $probeDir "TlsProbe.class"), [Convert]::FromBase64String($script:TlsProbeClassBase64))
+    } catch {
+        return $false
+    }
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $JavaPath
+    $info.Arguments = "-Djavax.net.ssl.trustStoreType=Windows-ROOT -cp `"$probeDir`" TlsProbe"
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    $process = $null
+    try {
+        $process = [System.Diagnostics.Process]::Start($info)
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        [void]$process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill() } catch { }
+            return $false
+        }
+        return ($process.ExitCode -eq 0 -and $stdout.Result -match 'TLS_OK')
+    } catch {
+        return $false
+    } finally {
+        if ($process) { $process.Dispose() }
+    }
 }
 
 function Find-CompatibleJava {
     $candidates = New-Object System.Collections.Generic.List[string]
-    $command = Get-Command java.exe -ErrorAction SilentlyContinue
-    if ($command) { $candidates.Add($command.Source) }
-    foreach ($root in @((Join-Path $script:AppRoot "runtime"), (Join-Path $MinecraftHome "runtime"))) {
+    # The private Temurin runtime is preferred over anything installed system-wide.
+    foreach ($root in @((Join-Path $script:AppRoot "runtime"))) {
         if (Test-Path -LiteralPath $root) {
             Get-ChildItem -LiteralPath $root -Filter java.exe -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch '\.(staging|backup-\d+)\\' } |
                 ForEach-Object { $candidates.Add($_.FullName) }
         }
     }
+    $command = Get-Command java.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) { $candidates.Add($command.Source) }
+    $minecraftRuntime = Join-Path $MinecraftHome "runtime"
+    if (Test-Path -LiteralPath $minecraftRuntime) {
+        Get-ChildItem -LiteralPath $minecraftRuntime -Filter java.exe -File -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    }
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
-        if ((Get-JavaMajor $candidate) -ge 25) {
-            return $candidate
-        }
+        if ((Get-JavaMajor $candidate) -lt 25) { continue }
+        if (Test-JavaTls $candidate) { return $candidate }
+        Write-Notice "Skipping Java at $candidate because TLS initialization failed."
     }
     return $null
 }
@@ -156,15 +233,16 @@ function Install-PortableJava {
     $java = Get-ChildItem -LiteralPath $staging -Filter java.exe -File -Recurse |
         Where-Object { $_.FullName -match '\\bin\\java\.exe$' } |
         Select-Object -First 1
-    if (-not $java -or (Get-JavaMajor $java.FullName) -lt 25) {
-        throw "The downloaded Temurin archive did not contain a usable Java 25 runtime."
+    if (-not $java -or (Get-JavaMajor $java.FullName) -lt 25 -or -not (Test-JavaTls $java.FullName)) {
+        throw "The downloaded Temurin archive did not contain a usable Java 25 runtime with working TLS."
     }
+    $relative = $java.FullName.Substring($staging.Length).TrimStart('\')
     if (Test-Path -LiteralPath $runtimeRoot) {
-        $backup = "$runtimeRoot.backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
-        Move-Item -LiteralPath $runtimeRoot -Destination $backup
+        $runtimeBackup = "$runtimeRoot.backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+        Move-Item -LiteralPath $runtimeRoot -Destination $runtimeBackup
     }
     Move-Item -LiteralPath $staging -Destination $runtimeRoot
-    return (Find-CompatibleJava)
+    return (Join-Path $runtimeRoot $relative)
 }
 
 function Get-LauncherState {
@@ -205,14 +283,15 @@ function Install-OfficialLauncher {
         Write-Step "DRY RUN: would install Mojang.MinecraftLauncher using winget"
         return $state
     }
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    $winget = Get-Command winget -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $winget) {
         throw "winget is unavailable. Install the official launcher from https://www.minecraft.net/download and rerun."
     }
     Write-Step "Installing the official Minecraft Launcher with winget"
-    & $winget.Source install --id Mojang.MinecraftLauncher --exact --source winget `
-        --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { throw "winget could not install the official Minecraft Launcher." }
+    $exitCode = Invoke-ExternalCommand $winget.Source @(
+        "install", "--id", "Mojang.MinecraftLauncher", "--exact", "--source", "winget",
+        "--accept-package-agreements", "--accept-source-agreements")
+    if ($exitCode -ne 0) { throw "winget could not install the official Minecraft Launcher." }
     $state = Get-LauncherState
     if (-not $state.Installed) { throw "Launcher installation completed but the launcher was not detected." }
     return $state
@@ -359,13 +438,13 @@ function Install-Vivecraft($Versions) {
     Write-Ready "Installed Vivecraft into isolated mods directory"
 }
 
-function Save-JsonFile([string]$Path, $Value, [bool]$BackUp) {
+function Save-JsonFile([string]$Path, $Value, [bool]$CreateBackup) {
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    if ($BackUp -and (Test-Path -LiteralPath $Path)) {
-        $backup = "$Path.jump-backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
-        Copy-Item -LiteralPath $Path -Destination $backup
-        Write-Step "Backed up $Path to $backup"
+    if ($CreateBackup -and (Test-Path -LiteralPath $Path)) {
+        $backupPath = "$Path.jump-backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+        Copy-Item -LiteralPath $Path -Destination $backupPath
+        Write-Step "Backed up $Path to $backupPath"
     }
     $temporary = "$Path.tmp"
     $json = $Value | ConvertTo-Json -Depth 100
