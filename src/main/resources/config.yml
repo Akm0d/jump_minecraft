@@ -1,0 +1,20 @@
+flight:
+  # Address of the Windows FLIGHT host. 127.0.0.1 works only when FLIGHT and
+  # Paper are on the same machine or an explicitly managed UDP relay is used.
+  host: "127.0.0.1"
+  port: 1201
+
+  # Local UDP bind. Port 0 asks the OS for an ephemeral source port; heartbeats
+  # and replies use the same socket, as required by GameModule sessions.
+  local-bind-host: "0.0.0.0"
+  local-port: 0
+
+  heartbeat-interval-millis: 1000
+  subscription-expiry-seconds: 3.0
+  socket-timeout-millis: 200
+  stale-after-millis: 1000
+
+movement:
+  blocks-per-meter: 1.0
+  heading-offset-degrees: 0.0
+  max-step-blocks: 20.0
