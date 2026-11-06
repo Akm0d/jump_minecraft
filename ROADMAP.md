@@ -92,14 +92,24 @@ evidence. Those boundaries remain explicit below.
   Vivecraft 26.3-1.3.17, Java 25, and SteamVR startup on Windows.
 - [ ] Verify headset look versus server-controlled travel, movement smoothness,
   roll limitations, and Vivecraft locomotion behavior.
-- [ ] Coordinate with Vicente; keep Unreal and Minecraft mutually exclusive and
-  preserve all JUMP interlocks and calibration behavior.
+- [ ] Coordinate with a JUMP technician; keep Unreal and Minecraft mutually
+  exclusive and preserve all JUMP interlocks and calibration behavior.
 - [ ] Observe real v2 preparing/jumping/flying/canopy/landed transitions and
   validate movement before attempting a physical launch.
 - [ ] Perform a controlled physical flight only with facility approval. Do not
   fabricate launch, landing, canopy, reset, readiness, or hardware commands.
 - [ ] Determine actual physical landing ownership. Space-to-land remains
   unconfirmed; do not claim completion without an observed `landed` sequence.
+
+## Optional visual enhancements
+
+- [ ] After baseline desktop and VR validation, evaluate Sodium, Iris,
+  Complementary Unbound, and Distant Horizons individually for Minecraft 26.3,
+  Vivecraft compatibility, and VR frame rate.
+- [ ] Confirm the intended projects and compatible releases before considering
+  Better Blending or Jodkas Smooth Terrain; neither was verified for 26.3.
+- [ ] Keep these out of the installer and Paper server until separately tested
+  and approved.
 
 ## Future work outside current scope
 

@@ -30,10 +30,14 @@ station bridge -- outbound registration --> Paper UDP :12101
 ```
 
 The station bridge initiates all LAN traffic, so Paper needs no workstation IP
-configuration. It registers a persistent random station ID, refreshes its
-current address and source port, relays only valid passive subscription
+configuration. Its zero-configuration defaults connect Minecraft to
+`10.1.10.158:25565` and register the station with Paper at
+`10.1.10.158:12101/UDP`. Both addresses remain installer parameters for future
+network changes. The bridge registers a persistent random station ID, refreshes
+its current address and source port, relays only valid passive subscription
 heartbeats to local FLIGHT, and forwards FLIGHT replies while the Paper lease is
-live. Hostnames are re-resolved periodically to tolerate address changes.
+live. Configured hostnames are re-resolved periodically to tolerate address
+changes.
 
 Paper owns one UDP registry thread and one tick task for all stations. Each
 station has independent endpoint, frame ordering, newest-frame buffer,
@@ -148,7 +152,7 @@ related state on every disengagement path. It rejects unsafe movement jumps,
 world changes, and unloaded destination chunks rather than synchronously
 generating chunks.
 
-## Windows technician installation
+## Windows JUMP technician installation
 
 From a downloaded or cloned repository, run in ordinary Windows PowerShell:
 
@@ -156,10 +160,10 @@ From a downloaded or cloned repository, run in ordinary Windows PowerShell:
 .\scripts\install_client.ps1
 ```
 
-The zero-argument defaults use Minecraft/Paper hostname `jump`, local FLIGHT at
-`127.0.0.1:1201`, and Paper registration UDP 12101. Optional parameters can
-change hostnames for a different private deployment, but routine bay setup does
-not require IP addresses.
+The zero-argument defaults use Minecraft server `10.1.10.158:25565`, Paper
+registration `10.1.10.158:12101/UDP`, and local FLIGHT `127.0.0.1:1201`.
+Optional parameters can change the server addresses for a future private
+deployment, but routine JUMP technician setup requires no address entry.
 
 The installer:
 
@@ -192,7 +196,7 @@ and moves JUMP-owned files into a timestamped recoverable `uninstalled`
 directory. It preserves shared launcher files, Fabric libraries, Java,
 credentials, and unrelated saves/profiles.
 
-Technician diagnostics are intentionally short:
+JUMP technician diagnostics are intentionally short:
 
 - Minecraft problem: launcher/profile or server connection fails.
 - FLIGHT problem: the bridge registers but receives no local frames.
@@ -204,6 +208,15 @@ Technician diagnostics are intentionally short:
 `-ValidateOnly` returns a failure when the bridge task is absent or stopped, or
 when its health is failed, unreadable, or more than 60 seconds old. A newly
 started task may briefly report `not reported yet` before its first health write.
+
+### Optional visual enhancements
+
+Sodium, Iris, Complementary Unbound, and Distant Horizons are possible future
+client-side enhancements, but none are installed or managed by the JUMP
+installer. Better Blending and Jodkas Smooth Terrain were not verified for
+Minecraft 26.3. Evaluate any optional mod individually for Vivecraft
+compatibility and VR frame rate only after the baseline facility tests pass;
+do not add server components without separate approval.
 
 ## Safety and limitations
 

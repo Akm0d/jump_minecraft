@@ -3,7 +3,7 @@ param(
     [string]$ConfigPath,
     [string]$StationId,
     [string]$StationName = $env:COMPUTERNAME,
-    [string]$PaperHost = "jump",
+    [string]$PaperHost = "10.1.10.158",
     [ValidateRange(1, 65535)]
     [int]$PaperPort = 12101,
     [string]$FlightHost = "127.0.0.1",

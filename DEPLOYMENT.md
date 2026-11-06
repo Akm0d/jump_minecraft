@@ -3,6 +3,11 @@
 Read-only inspection on 2026-11-06 found:
 
 - Windows host `DESKTOP-UDACJER`, reached through SSH alias `jump`.
+- The SSH alias `jump` is local to `begula`; JUMP workstations use the
+  Alienware LAN address `10.1.10.158`.
+- Default client endpoints are Minecraft `10.1.10.158:25565` and station
+  registration `10.1.10.158:12101/UDP`. Installer parameters keep both
+  configurable for future network changes.
 - Actual server directory `C:\Users\admin\jump_minecraft`; the historical
   `C:\JUMP\Minecraft` path does not exist.
 - Paper `26.3-231-main@8a170a3`, API `26.3.build.231-stable`.
@@ -51,8 +56,8 @@ Authorized deployment validation was performed on 2026-11-06:
   next station, and accepted v2 `LANDED #987654322` with `accepted=1`,
   `rejected=0`, `player=none`, and `active=false`.
 - Final observed state: no Java process, TCP 25565 listener, or UDP 12101
-  listener. The verified JAR remains installed for the coordinated technician
-  test.
+  listener. The verified JAR remains installed for the coordinated JUMP
+  technician test.
 
 Prepared local release artifact:
 

@@ -62,7 +62,7 @@ flowchart TD
     JUMP -->|"back z > 0.667 m and descending"| PHYS --> FLY
     FLY --> UDP --> RX --> SESSION --> MAP --> APPLY --> PLAYER
 
-    SPACE["Technician presses Space"] -. "missing or unknown handler" .-> CMD["setLandingTarget?"]
+    SPACE["JUMP technician presses Space"] -. "missing or unknown handler" .-> CMD["setLandingTarget?"]
     CMD -. "target and heading required" .-> PREDEP
     FLY -->|"target request or internal target"| PREDEP
     PREDEP -->|"10 second timer"| PARA
@@ -353,7 +353,7 @@ This is the shortest path to visible JUMP-controlled flight in Minecraft while p
 ## 2026-11-06 protocol and multi-station update
 
 The earlier v1-only recommendation is superseded by source and live evidence.
-Vicente's FLIGHT installation uses `gameframe_version = 2`, and the Alienware
+The observed JUMP FLIGHT installation uses `gameframe_version = 2`, and the Alienware
 Paper log showed thousands of binary datagrams rejected by the JSON decoder at
 byte zero. Network delivery itself was therefore already demonstrated.
 
