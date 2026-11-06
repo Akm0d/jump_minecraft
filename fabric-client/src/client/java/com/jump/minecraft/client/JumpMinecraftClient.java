@@ -2,6 +2,7 @@ package com.jump.minecraft.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -26,7 +27,7 @@ public final class JumpMinecraftClient implements ClientModInitializer {
                 "key.jump_minecraft.toggle_mode", InputConstants.Type.KEYBOARD, InputConstants.KEY_F1, CATEGORY));
         requestJump = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.jump_minecraft.request_jump", InputConstants.Type.KEYBOARD, InputConstants.KEY_F2, CATEGORY));
-        clearVanillaConflicts(Minecraft.getInstance());
+        ClientLifecycleEvents.CLIENT_STARTED.register(JumpMinecraftClient::clearVanillaConflicts);
         hideSurvivalHud();
         ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);
     }
