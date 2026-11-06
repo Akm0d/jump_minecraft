@@ -6,8 +6,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 final class MiniJson {
+    static final int MAX_NESTING = 64;
+
     private final String input;
     private int index;
+    private int nesting;
 
     private MiniJson(String input) {
         this.input = input;
@@ -46,33 +49,48 @@ final class MiniJson {
     }
 
     private List<Object> parseArray() {
-        expect('[');
-        List<Object> result = new ArrayList<>();
-        skipWhitespace();
-        if (consume(']')) return result;
-        while (true) {
-            result.add(parseValue());
+        enterContainer();
+        try {
+            expect('[');
+            List<Object> result = new ArrayList<>();
             skipWhitespace();
             if (consume(']')) return result;
-            expect(',');
+            while (true) {
+                result.add(parseValue());
+                skipWhitespace();
+                if (consume(']')) return result;
+                expect(',');
+            }
+        } finally {
+            nesting--;
         }
     }
 
     private Map<String, Object> parseObjectValue() {
-        expect('{');
-        Map<String, Object> result = new LinkedHashMap<>();
-        skipWhitespace();
-        if (consume('}')) return result;
-        while (true) {
-            skipWhitespace();
-            String key = parseString();
-            skipWhitespace();
-            expect(':');
-            result.put(key, parseValue());
+        enterContainer();
+        try {
+            expect('{');
+            Map<String, Object> result = new LinkedHashMap<>();
             skipWhitespace();
             if (consume('}')) return result;
-            expect(',');
+            while (true) {
+                skipWhitespace();
+                String key = parseString();
+                skipWhitespace();
+                expect(':');
+                result.put(key, parseValue());
+                skipWhitespace();
+                if (consume('}')) return result;
+                expect(',');
+            }
+        } finally {
+            nesting--;
         }
+    }
+
+    private void enterContainer() {
+        nesting++;
+        if (nesting > MAX_NESTING) fail("JSON nesting exceeds " + MAX_NESTING);
     }
 
     private String parseString() {

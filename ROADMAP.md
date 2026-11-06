@@ -14,7 +14,8 @@ evidence. Those boundaries remain explicit below.
 - [x] Derive GameFrame v2's 368-byte default-aligned MSVC x64 wire layout from
   `jump_flight` source without modifying that repository.
 - [x] Decode and validate v1 JSON and v2 binary frames, all eight lifecycle
-  states, optional trailing JSON, malformed input, and ordered frame delivery.
+  states, optional trailing JSON, malformed input, bounded JSON nesting, and
+  ordered frame delivery.
 - [x] Maintain independent sessions, endpoints, ordering, controllers, mapping
   origins, stale handling, restoration, and diagnostics for a bounded arbitrary
   number of stations. Controller tests cover landed/reset/stale/stream-reset,
@@ -45,7 +46,7 @@ evidence. Those boundaries remain explicit below.
 
 - [x] Run the final Java 25 `clean check jar`, Python suite, and
   `git diff --check`; inspect the production JAR. SHA-256:
-  `8ef7a26f84c640db486d443dfffadcc9664b8e1984a863c1a1f0aef729e58af3`.
+  `eba3379e9829b792a112181aef892bb53e8ee5c7c18ba747eb497164c77854a0`.
 - [x] Inspect the Alienware server read-only: actual directory, Paper/Java
   versions, installed plugin/config/hash, processes, listener, logs, and startup
   mechanisms.

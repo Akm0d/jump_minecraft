@@ -50,7 +50,7 @@ Prepared local release artifact:
 
 ```text
 build/libs/jump-minecraft-0.1.0.jar
-SHA-256 8ef7a26f84c640db486d443dfffadcc9664b8e1984a863c1a1f0aef729e58af3
+SHA-256 eba3379e9829b792a112181aef892bb53e8ee5c7c18ba747eb497164c77854a0
 ```
 
 ## Maintenance-window procedure

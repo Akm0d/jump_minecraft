@@ -116,6 +116,8 @@ movement:
 Allow UDP 12101 only on the trusted LAN/private overlay. Do not publish it
 through Playit or a public firewall rule. Playit, if used, carries Minecraft
 client traffic only. Paper no longer stores a per-station FLIGHT address.
+Registration, v1, and v2 trailing JSON share a fixed nesting limit so a
+malformed LAN datagram cannot exhaust the registry thread's stack.
 
 ## Automatic player assignment
 
