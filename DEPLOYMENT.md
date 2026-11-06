@@ -1,4 +1,4 @@
-# Alienware Paper deployment preparation
+# Alienware Paper deployment and rollback
 
 Read-only inspection on 2026-11-06 found:
 
@@ -9,18 +9,42 @@ Read-only inspection on 2026-11-06 found:
 - Java `C:\Program Files\Java\jdk-25.0.5.0.3\bin\java.exe`.
 - Installed plugin `plugins\jump-minecraft-0.1.0.jar`, SHA-256
   `C404419A2370258CFA50693C0E7BF3FFAC7E866A42902C6BB01EAAE849D9E52A`.
-- Existing configuration targets the historical relay at
-  `10.1.10.113:12100` and will be retained for rollback. The new plugin ignores
-  those legacy endpoint keys and adds registration defaults.
-- No Paper/Java process or TCP 25565 listener was active. No matching Windows
-  service, scheduled task, or root startup script was found. A clean startup
-  command must be identified with the administrator before deployment.
+- The pre-deployment configuration targeted the historical relay at
+  `10.1.10.113:12100`; it is retained in the timestamped rollback backup. The
+  installed configuration now contains only multi-station registration,
+  per-station staleness, and movement settings.
+- No matching Windows service, scheduled task, or root startup script was
+  found. The machine's local notes document
+  `java -Xms2G -jar .\paper.jar`; validation used that command with `nogui`
+  and stopped Paper through its console.
 - The 2026-11-05 log showed `jumpsteve` joining from `10.1.10.113`, successful
   plugin load/manual arm, 17,365 rejected datagrams, zero accepted frames, and
   `Expected digit at byte 0`. This is consistent with binary v2 reaching the
   previous v1-only decoder.
 
-No deployment or remote write was performed during inspection.
+Authorized deployment validation was performed on 2026-11-06:
+
+- Backup:
+  `C:\Users\admin\jump_minecraft\plugins\backups\20261106-124359`.
+  It contains the original JAR, original config, and `ROLLBACK.txt`.
+- Installed JAR SHA-256:
+  `8EF7A26F84C640DB486D443DFFFADCC9664B8E1984A863C1A1F0AEF729E58AF3`.
+- Paper reached ready state twice with JumpMinecraft enabled and UDP 12101
+  bound. `jump status` reported no startup or registry errors.
+- A temporary, unassigned validation station received the registration
+  acknowledgement and byte-exact FLIGHT subscription heartbeat. Paper accepted
+  one 368-byte v2 `LANDED` fixture:
+  `accepted=1`, `rejected=0`, `lastProtocol=v2`,
+  `latest=LANDED #987654321`.
+- No player was connected or assigned:
+  `player=none`, `armed=false`, `active=false`. No trajectory or physical
+  command was sent.
+- The obsolete single-station endpoint keys were removed from the installed
+  plugin config after preserving the original. Paper restarted successfully
+  with the clean config and was stopped through the console.
+- Final observed state: no Java process, TCP 25565 listener, or UDP 12101
+  listener. The verified JAR remains installed for the coordinated technician
+  test.
 
 Prepared local release artifact:
 
@@ -39,7 +63,7 @@ Stage the release without replacing the live plugin:
 
 ```bash
 scp build/libs/jump-minecraft-0.1.0.jar \
-  'jump:C:/Users/admin/jump_minecraft/jump-minecraft-0.1.0.jar.new'
+  'jump:C:/Users/admin/jump_minecraft/plugins/jump-minecraft-0.1.0.jar.new'
 ```
 
 In a PowerShell SSH session, record state and make timestamped backups:
@@ -47,14 +71,14 @@ In a PowerShell SSH session, record state and make timestamped backups:
 ```powershell
 $root = 'C:\Users\admin\jump_minecraft'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$backup = Join-Path $root "plugins\backup\pre-multistation-$stamp"
+$backup = Join-Path $root "plugins\backups\$stamp"
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
 Copy-Item "$root\plugins\jump-minecraft-0.1.0.jar" $backup
 if (Test-Path "$root\plugins\JumpMinecraft\config.yml") {
     Copy-Item "$root\plugins\JumpMinecraft\config.yml" $backup
 }
 Get-FileHash "$root\plugins\jump-minecraft-0.1.0.jar" -Algorithm SHA256
-Get-FileHash "$root\jump-minecraft-0.1.0.jar.new" -Algorithm SHA256
+Get-FileHash "$root\plugins\jump-minecraft-0.1.0.jar.new" -Algorithm SHA256
 $backup
 ```
 
@@ -64,7 +88,7 @@ plugin:
 
 ```powershell
 $root = 'C:\Users\admin\jump_minecraft'
-Move-Item "$root\jump-minecraft-0.1.0.jar.new" `
+Move-Item "$root\plugins\jump-minecraft-0.1.0.jar.new" `
     "$root\plugins\jump-minecraft-0.1.0.jar" -Force
 ```
 

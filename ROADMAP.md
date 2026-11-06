@@ -50,13 +50,16 @@ evidence. Those boundaries remain explicit below.
   mechanisms.
 - [x] Confirm historical failure was v2 bytes reaching a v1-only decoder rather
   than basic Minecraft or relay connectivity.
-- [ ] Identify or create an administrator-approved clean Paper start/stop
-  mechanism. No running Paper process, listener, service, scheduled task, or
-  root startup script was found during inspection.
-- [ ] With explicit authorization, preserve timestamped plugin/config backups,
+- [x] Identify and exercise the server's documented clean Paper start/stop
+  procedure: PowerShell starts `java -Xms2G -jar .\paper.jar nogui` and the
+  Paper console `stop` command performs the clean shutdown. No persistent
+  service or scheduled task exists.
+- [x] With explicit authorization, preserve timestamped plugin/config backups,
   install the verified JAR, and perform a clean Paper start.
-- [ ] Inspect startup logs, plugin registration, UDP 12101 listener, `/jump
-  status`, and `/jump stations`; preserve an exact file and startup rollback.
+- [x] Inspect startup logs, plugin registration, UDP 12101 listener, and
+  `/jump status`; register a no-player validation station and accept one
+  source-verified 368-byte v2 `LANDED` frame with zero rejections. Preserve an
+  exact file/config rollback and leave Paper cleanly stopped.
 
 ## P1 — Controlled desktop integration
 
