@@ -455,13 +455,32 @@ function Assert-StationBridge {
         }
     }
     $task = Get-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue
-    if (-not $task) { $issues.Add("station bridge scheduled task is missing") }
-    if ($issues.Count -gt 0) { throw "Bridge validation failed: $($issues -join '; ')" }
-    $health = if (Test-Path -LiteralPath $script:BridgeHealth) {
-        (Get-Content -LiteralPath $script:BridgeHealth -Raw | ConvertFrom-Json).state
-    } else {
-        "not reported yet"
+    if (-not $task) {
+        $issues.Add("station bridge scheduled task is missing")
+    } elseif ([string]$task.State -ne "Running") {
+        $issues.Add("station bridge scheduled task is $($task.State)")
     }
+    $health = "not reported yet"
+    if (Test-Path -LiteralPath $script:BridgeHealth) {
+        try {
+            $healthRecord = Get-Content -LiteralPath $script:BridgeHealth -Raw | ConvertFrom-Json
+            $health = [string]$healthRecord.state
+            if ($health -notin @("starting", "waiting", "registered", "healthy", "validated")) {
+                $issues.Add("station bridge health is $health")
+            }
+            if (-not $healthRecord.updatedUtc) {
+                $issues.Add("station bridge health timestamp is missing")
+            } else {
+                $healthUpdated = [DateTimeOffset]::Parse([string]$healthRecord.updatedUtc).UtcDateTime
+                if (([DateTime]::UtcNow - $healthUpdated).TotalSeconds -gt 60) {
+                    $issues.Add("station bridge health is stale")
+                }
+            }
+        } catch {
+            $issues.Add("station bridge health is unreadable")
+        }
+    }
+    if ($issues.Count -gt 0) { throw "Bridge validation failed: $($issues -join '; ')" }
     Write-Ready "Station bridge is installed (task=$($task.State), health=$health)"
 }
 

@@ -199,6 +199,10 @@ Technician diagnostics are intentionally short:
   shows no station.
 - Assignment problem: the station is healthy but reports unassigned/ambiguous.
 
+`-ValidateOnly` returns a failure when the bridge task is absent or stopped, or
+when its health is failed, unreadable, or more than 60 seconds old. A newly
+started task may briefly report `not reported yet` before its first health write.
+
 ## Safety and limitations
 
 - FLIGHT and Unreal configuration are not modified. Run Unreal and Minecraft

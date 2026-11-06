@@ -11,6 +11,16 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Assert-ThrowsLike([scriptblock]$Action, [string]$Pattern, [string]$Message) {
+    try {
+        & $Action
+    } catch {
+        if ($_.Exception.Message -like $Pattern) { return }
+        throw "$Message (unexpected error: $($_.Exception.Message))"
+    }
+    throw "$Message (no error was raised)"
+}
+
 function Import-InstallerFunctions([string]$Path) {
     $source = [IO.File]::ReadAllText($Path)
     $tokens = $null
@@ -37,6 +47,7 @@ $global:started = 0
 $global:stopped = 0
 $global:unregistered = 0
 $global:taskExists = $false
+$global:taskState = "Running"
 function global:New-ScheduledTaskAction { return [pscustomobject]@{ Kind = "action" } }
 function global:New-ScheduledTaskTrigger { return [pscustomobject]@{ Kind = "trigger" } }
 function global:New-ScheduledTaskSettingsSet { return [pscustomobject]@{ Kind = "settings" } }
@@ -50,7 +61,7 @@ function global:Stop-ScheduledTask {
     if ($global:taskExists) { $global:stopped++ }
 }
 function global:Get-ScheduledTask {
-    if ($global:taskExists) { return [pscustomobject]@{ State = "Running" } }
+    if ($global:taskExists) { return [pscustomobject]@{ State = $global:taskState } }
     return $null
 }
 function global:Unregister-ScheduledTask {
@@ -122,6 +133,30 @@ try {
     Assert-True ($global:stopped -eq 1) `
         "Running bridge task was not stopped before upgrade"
     Assert-StationBridge
+
+    $global:taskState = "Ready"
+    Assert-ThrowsLike { Assert-StationBridge } "*scheduled task is Ready*" `
+        "Validation accepted a stopped bridge task"
+    $global:taskState = "Running"
+    $failedHealth = [ordered]@{
+        state = "failed"
+        detail = "test failure"
+        updatedUtc = [DateTime]::UtcNow.ToString("o")
+    }
+    [IO.File]::WriteAllText(
+        $global:BridgeHealth,
+        ($failedHealth | ConvertTo-Json),
+        (New-Object Text.UTF8Encoding($false)))
+    Assert-ThrowsLike { Assert-StationBridge } "*health is failed*" `
+        "Validation accepted failed bridge health"
+    $failedHealth.state = "waiting"
+    $failedHealth.updatedUtc = [DateTime]::UtcNow.AddMinutes(-5).ToString("o")
+    [IO.File]::WriteAllText(
+        $global:BridgeHealth,
+        ($failedHealth | ConvertTo-Json),
+        (New-Object Text.UTF8Encoding($false)))
+    Assert-ThrowsLike { Assert-StationBridge } "*health is stale*" `
+        "Validation accepted stale bridge health"
 
     Uninstall-JumpMinecraft
     $after = Get-Content $profileFile -Raw | ConvertFrom-Json
