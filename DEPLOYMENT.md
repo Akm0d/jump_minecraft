@@ -27,7 +27,7 @@ Authorized deployment validation was performed on 2026-11-06:
 - Backup:
   `C:\Users\admin\jump_minecraft\plugins\backups\20261106-124359`.
   It contains the original JAR, original config, and `ROLLBACK.txt`.
-- Installed JAR SHA-256:
+- Initial multi-station JAR SHA-256:
   `8EF7A26F84C640DB486D443DFFFADCC9664B8E1984A863C1A1F0AEF729E58AF3`.
 - Paper reached ready state twice with JumpMinecraft enabled and UDP 12101
   bound. `jump status` reported no startup or registry errors.
@@ -42,6 +42,14 @@ Authorized deployment validation was performed on 2026-11-06:
 - The obsolete single-station endpoint keys were removed from the installed
   plugin config after preserving the original. Paper restarted successfully
   with the clean config and was stopped through the console.
+- A subsequent parser-hardening deployment preserved that JAR and config at
+  `C:\Users\admin\jump_minecraft\plugins\backups\20261106-131620`, then
+  installed SHA-256
+  `EBA3379E9829B792A112181AEF892BB53E8EE5C7C18BA747EB497164C77854A0`.
+  Live validation rejected an excessive-nesting registration with
+  `JSON nesting exceeds 64`, kept the registry thread alive, registered the
+  next station, and accepted v2 `LANDED #987654322` with `accepted=1`,
+  `rejected=0`, `player=none`, and `active=false`.
 - Final observed state: no Java process, TCP 25565 listener, or UDP 12101
   listener. The verified JAR remains installed for the coordinated technician
   test.
