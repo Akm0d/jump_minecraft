@@ -51,7 +51,14 @@ public final class ControllerTests {
         assertEquals(7, player.location.getX(), 1.0e-6, "final landed location applied");
         assertTrue(player.gravity && !player.allowFlight && !player.flying,
                 "normal controls restored at landed");
-        assertFalse(controller.isDesignated(player.id), "landed disarms player");
+        assertTrue(controller.isDesignated(player.id), "landed preserves station assignment");
+        assertTrue(controller.status().contains("ready for next flight"), "station returns to ready");
+
+        offer(frames, 6, FlightState.JUMPING, new Vec3(200, 200, 200), new Vec3(0, 0, 1));
+        controller.tick();
+        offer(frames, 7, FlightState.FLYING, new Vec3(200, 200, 200), new Vec3(0, 0, 1));
+        controller.tick();
+        assertTrue(controller.isActive(), "repeat flight starts without reassignment");
     }
 
     @Test
@@ -79,7 +86,19 @@ public final class ControllerTests {
         staleFrames.offer(stale, System.nanoTime() - 10_000_000L);
         staleController.tick();
         assertTrue(player.gravity, "stale input restores gravity");
-        assertFalse(staleController.isDesignated(player.id), "stale input disarms player");
+        assertTrue(staleController.isDesignated(player.id), "stale input preserves station assignment");
+
+        OrderedFrameStore resetStreamFrames = new OrderedFrameStore();
+        FlightController resetStreamController = controller(player, resetStreamFrames, 1_000);
+        resetStreamController.arm(player.proxy);
+        offer(resetStreamFrames, 5, FlightState.JUMPING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
+        resetStreamController.tick();
+        assertFalse(player.gravity, "launch engages Minecraft control before stream reset");
+        resetStreamFrames.clear();
+        resetStreamController.tick();
+        assertTrue(player.gravity, "cleared stream restores player control on the next tick");
+        assertTrue(resetStreamController.isDesignated(player.id),
+                "stream reset preserves the station assignment for reconnect");
     }
 
     private static FlightController controller(PlayerState player, OrderedFrameStore frames, long staleMillis) {
@@ -163,21 +182,8 @@ public final class ControllerTests {
             case "equals" -> instance == args[0];
             case "hashCode" -> System.identityHashCode(instance);
             case "toString" -> "test-" + method.getDeclaringClass().getSimpleName();
-            default -> primitiveDefault(method.getReturnType());
+            default -> TestDefaults.value(method);
         };
-    }
-
-    private static Object primitiveDefault(Class<?> type) {
-        if (!type.isPrimitive() || type == void.class) return null;
-        if (type == boolean.class) return false;
-        if (type == char.class) return '\0';
-        if (type == byte.class) return (byte) 0;
-        if (type == short.class) return (short) 0;
-        if (type == int.class) return 0;
-        if (type == long.class) return 0L;
-        if (type == float.class) return 0.0f;
-        if (type == double.class) return 0.0d;
-        throw new IllegalArgumentException("Unsupported primitive: " + type);
     }
 
     @SuppressWarnings("unchecked")

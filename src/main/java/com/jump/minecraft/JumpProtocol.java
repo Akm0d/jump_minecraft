@@ -7,11 +7,16 @@ public final class JumpProtocol {
     private JumpProtocol() {
     }
 
+    public static FlightFrame decode(byte[] bytes, int length) {
+        return FlightFrameDecoder.decode(bytes, length);
+    }
+
     public static FlightFrame decodeV1(byte[] bytes, int length) {
+        FlightFrameDecoder.validateBounds(bytes, length);
         String json = new String(bytes, 0, length, StandardCharsets.UTF_8);
         Map<String, Object> root = MiniJson.parseObject(json);
         return new FlightFrame(
-                requiredNumber(root, "findex").longValue(),
+                requiredFrameIndex(root),
                 FlightState.fromWire(requiredString(root, "state")),
                 vector(root, "pos"),
                 vector(root, "forward"),
@@ -20,7 +25,12 @@ public final class JumpProtocol {
                 optionalNumber(root, "speed", 0.0));
     }
 
+    public static FlightFrame decodeV2(byte[] bytes, int length) {
+        return GameFrameV2Decoder.decode(bytes, length);
+    }
+
     public static byte[] heartbeat(long findex, double expirySeconds) {
+        if (findex < 0L) throw new IllegalArgumentException("Frame index must not be negative");
         if (!Double.isFinite(expirySeconds) || expirySeconds <= 0.0) {
             throw new IllegalArgumentException("Expiry must be finite and positive");
         }
@@ -50,6 +60,10 @@ public final class JumpProtocol {
             throw new IllegalArgumentException("Non-finite numeric field: " + name);
         }
         return number;
+    }
+
+    private static long requiredFrameIndex(Map<String, Object> root) {
+        return FrameIndex.fromNumber(requiredNumber(root, "findex"));
     }
 
     private static String requiredString(Map<String, Object> object, String name) {

@@ -2,12 +2,12 @@ name: JumpMinecraft
 version: '${version}'
 main: com.jump.minecraft.JumpMinecraftPlugin
 api-version: '26.3'
-description: Position-authoritative bridge from JUMP FLIGHT to one Minecraft player.
+description: Position-authoritative multi-station bridge from JUMP FLIGHT to Minecraft.
 authors: [JUMP]
 commands:
   jump:
-    description: Arm, disarm, or inspect the JUMP flight bridge.
-    usage: /jump <arm [player]|disarm|status>
+    description: Inspect or troubleshoot JUMP station assignments.
+    usage: /jump <status|stations|assign <station> <player>|disarm [station]>
     permission: jump.control
 permissions:
   jump.control:

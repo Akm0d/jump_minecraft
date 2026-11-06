@@ -16,6 +16,10 @@ public final class OrderedFrameStore {
         return latest;
     }
 
+    public synchronized void clear() {
+        latest = null;
+    }
+
     public synchronized boolean isStale(long nowNanos, long staleAfterNanos) {
         return latest == null || nowNanos - latest.receivedNanos() > staleAfterNanos;
     }

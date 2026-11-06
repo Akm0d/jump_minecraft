@@ -198,15 +198,16 @@ This is intended for the rendered game actor. Minecraft should use top-level `po
 
 ```text
 JumpMinecraftPlugin
-├── JumpUdpClient
-│   ├── DatagramSocket receive loop
-│   ├── heartbeat timer
-│   └── strict v1 decoder
-├── FlightSessionController
-│   ├── armed player UUID
-│   ├── lifecycle state
-│   ├── Minecraft and JUMP anchors
-│   └── stale-data watchdog
+├── StationRegistryServer
+│   ├── one DatagramSocket receive/heartbeat loop
+│   ├── outbound station registration endpoints
+│   └── strict v1/v2 decoder dispatch
+├── StationManager
+│   └── StationSession[]
+│       ├── assigned player UUID
+│       ├── independent frame ordering and lifecycle
+│       ├── Minecraft and JUMP anchors
+│       └── stale-data watchdog
 ├── CoordinateMapper
 ├── PlayerMotionApplier
 │   ├── main-thread movement
@@ -348,3 +349,71 @@ Build one vertical-slice Paper plugin in `jump_minecraft` that subscribes to syn
 The synthetic stream should exercise the complete lifecycle, but the first plugin should send no launch, landing, reset, calibration, or collision commands to JUMP.
 
 This is the shortest path to visible JUMP-controlled flight in Minecraft while preserving JUMP as the sole physics authority and isolating the remaining facility questions: network reachability and what Space actually does.
+
+## 2026-11-06 protocol and multi-station update
+
+The earlier v1-only recommendation is superseded by source and live evidence.
+Vicente's FLIGHT installation uses `gameframe_version = 2`, and the Alienware
+Paper log showed thousands of binary datagrams rejected by the JSON decoder at
+byte zero. Network delivery itself was therefore already demonstrated.
+
+`GameModule::OnSendFrame2` copies `sizeof(GameFrame2)` raw bytes, appends an
+optional NUL-terminated JSON dump, and sends their combined size. The Windows
+x64 Visual Studio project uses the default MSVC alignment; no packing override
+applies. `Vec3f` is three 32-bit floats. The resulting layout is:
+
+```text
+0   int16 type, version, binsize, jsonsize
+8   uint64 findex
+16  int32 state
+20  Vec3f pos
+32  Vec3f forward
+44  Vec3f up
+56  8 * GameTracker2 (each 3 * Vec3f; 288 bytes)
+344 bool hasTracking
+345 3 bytes padding
+348 float speed
+352 float hudAOA
+356 int32 exitPoint
+360 int32 nextExitPoint
+364 4 bytes tail padding
+368 optional jsonsize bytes, including the final NUL
+```
+
+All numeric fields are little-endian on the supported Windows x64 producer.
+The state integer indexes the same eight strings used by v1:
+`not_initialized`, `preparing`, `jumping`, `flying`, `pre_deployed`,
+`deployed`, `canopy_flying`, and `landed`.
+
+The implemented decoder deliberately requires a 368-byte `binsize` instead of
+treating the C++ struct as a portable format. A producer compiled with a
+different ABI is rejected visibly rather than misdecoded. The optional JSON is
+validated as NUL-terminated UTF-8 object data but is not used for movement.
+
+### Registration choice
+
+Outbound registration to a stable private Paper hostname was selected over
+mDNS and broadcast discovery:
+
+- it works across ordinary LAN/VLAN routing where broadcast discovery may not;
+- it needs one long-lived UDP socket per workstation and one registry thread on
+  Paper, with no service-discovery dependency;
+- the station's registration source IP and port are exactly the endpoint Paper
+  uses for passive heartbeats and returned frames; and
+- periodic hostname resolution plus registration refresh handles workstation
+  and Paper address changes without storing station IPs on Paper.
+
+The bridge continues to communicate with FLIGHT at loopback and leaves FLIGHT's
+configuration untouched. Paper bounds station count, accepts only private
+sources, rejects a duplicate live identity from a different address, and lets
+an expired identity move after the configured TTL.
+
+### Assignment choice
+
+Paper first matches a joining Minecraft connection address to an unclaimed
+station registration address. It uses connection-order fallback only when one
+station and one unassigned player remain. Same-address ambiguity is reported
+and left unmapped. This covers direct LAN clients without a client mod while
+avoiding silent swaps; a manual assignment remains a troubleshooting override.
+If facility topology hides all clients behind a proxy/NAT address, that live
+evidence would justify a small identity component later.

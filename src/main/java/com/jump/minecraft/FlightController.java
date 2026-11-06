@@ -41,16 +41,24 @@ public final class FlightController {
     }
 
     public synchronized void arm(Player player) {
-        restore("re-armed");
+        stop("re-assigned", false);
         playerId = player.getUniqueId();
         lifecycle.arm();
         lastAppliedFindex = Long.MIN_VALUE;
-        lastStopReason = "armed, waiting for jumping/flying";
-        player.sendMessage("JUMP armed. Waiting for a physical flight transition.");
+        lastStopReason = "assigned, waiting for jumping/flying";
+        player.sendMessage("JUMP station ready. Waiting for a physical flight transition.");
     }
 
     public synchronized void disarm(String reason) {
-        restore(reason);
+        stop(reason, false);
+    }
+
+    public synchronized UUID assignedPlayerId() {
+        return playerId;
+    }
+
+    public synchronized boolean isActive() {
+        return lifecycle.isActive();
     }
 
     public synchronized boolean isDesignated(UUID id) {
@@ -76,15 +84,11 @@ public final class FlightController {
         if (!lifecycle.isArmed() || playerId == null) return;
         Player player = server.getPlayer(playerId);
         if (player == null || !player.isOnline()) {
-            restore("player disconnected");
+            stop("player disconnected", false);
             return;
         }
-        OrderedFrameStore.Snapshot snapshot = frames.latest();
+        OrderedFrameStore.Snapshot snapshot = freshSnapshotOrRestore();
         if (snapshot == null) return;
-        if (frames.isStale(System.nanoTime(), staleAfterNanos)) {
-            if (controlSnapshot != null) restore("UDP frames became stale");
-            return;
-        }
         FlightFrame frame = snapshot.frame();
         if (frame.findex() == lastAppliedFindex) return;
         lastAppliedFindex = frame.findex();
@@ -101,10 +105,17 @@ public final class FlightController {
             case APPLY_TRAJECTORY -> apply(player, frame, false);
             case RESTORE_LANDED -> {
                 if (mapper != null) apply(player, frame, true);
-                restore("JUMP reported landed");
+                stop("JUMP reported landed", true);
             }
-            case RESTORE_RESET -> restore("JUMP returned to preparing/reset");
+            case RESTORE_RESET -> stop("JUMP returned to preparing/reset", true);
         }
+    }
+
+    private OrderedFrameStore.Snapshot freshSnapshotOrRestore() {
+        OrderedFrameStore.Snapshot snapshot = frames.latest();
+        if (snapshot != null && !frames.isStale(System.nanoTime(), staleAfterNanos)) return snapshot;
+        if (controlSnapshot != null) stop("UDP frames became stale", true);
+        return null;
     }
 
     private void captureMinecraftOrigin(Player player) {
@@ -119,23 +130,23 @@ public final class FlightController {
         MappedPose pose = mapper.map(frame);
         World world = minecraftOrigin.getWorld();
         if (world == null) {
-            restore("launch world is unavailable");
+            stop("launch world is unavailable", true);
             return;
         }
         Location destination = new Location(world, pose.x(), pose.y(), pose.z(), pose.yaw(), pose.pitch());
         Location current = player.getLocation();
         if (!permitLargeStep && !current.getWorld().equals(world)) {
-            restore("player changed worlds");
+            stop("player changed worlds", true);
             return;
         }
         if (!permitLargeStep && current.distance(destination) > maxStepBlocks) {
-            restore("movement discontinuity exceeded " + maxStepBlocks + " blocks");
+            stop("movement discontinuity exceeded " + maxStepBlocks + " blocks", true);
             return;
         }
         int chunkX = destination.getBlockX() >> 4;
         int chunkZ = destination.getBlockZ() >> 4;
         if (!world.isChunkLoaded(chunkX, chunkZ)) {
-            restore("destination chunk is not loaded");
+            stop("destination chunk is not loaded", true);
             return;
         }
         player.setVelocity(new Vector());
@@ -147,10 +158,11 @@ public final class FlightController {
         } finally {
             teleportingPlayer = null;
         }
-        if (!moved) restore("Paper rejected player teleport");
+        if (!moved) stop("Paper rejected player teleport", true);
     }
 
-    private void restore(String reason) {
+    private void stop(String reason, boolean keepAssignment) {
+        UUID assigned = playerId;
         Player player = playerId == null ? null : server.getPlayer(playerId);
         if (player != null && controlSnapshot != null) {
             controlSnapshot.restore(player);
@@ -158,13 +170,18 @@ public final class FlightController {
         }
         if (playerId != null) log.accept("JUMP session stopped for " + playerId + ": " + reason);
         lifecycle.disarm();
-        playerId = null;
+        playerId = keepAssignment ? assigned : null;
         minecraftOrigin = null;
         mapper = null;
         controlSnapshot = null;
         teleportingPlayer = null;
         lastAppliedFindex = Long.MIN_VALUE;
-        lastStopReason = reason;
+        if (keepAssignment && assigned != null) {
+            lifecycle.arm();
+            lastStopReason = reason + ", ready for next flight";
+        } else {
+            lastStopReason = reason;
+        }
     }
 
     private static Vec3 vector(Location location) {

@@ -1,15 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
-    [string]$ListenAddress,
+    [string]$StationId,
+    [string]$StationName = $env:COMPUTERNAME,
+    [string]$PaperHost = "jump",
     [ValidateRange(1, 65535)]
-    [int]$ListenPort = 12100,
-    [string]$AllowedPaperAddress,
+    [int]$PaperPort = 12101,
     [string]$FlightHost = "127.0.0.1",
     [ValidateRange(1, 65535)]
     [int]$FlightPort = 1201,
     [ValidateRange(1, 30)]
-    [int]$SubscriberTimeoutSeconds = 5,
+    [int]$RegistrationIntervalSeconds = 1,
+    [string]$HealthPath,
     [switch]$ValidateOnly
 )
 
@@ -22,22 +24,22 @@ function Test-PrivateIPv4([Net.IPAddress]$Address) {
     if ($bytes[0] -eq 127 -or $bytes[0] -eq 10) { return $true }
     if ($bytes[0] -eq 192 -and $bytes[1] -eq 168) { return $true }
     if ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) { return $true }
-    if ($bytes[0] -eq 100 -and $bytes[1] -ge 64 -and $bytes[1] -le 127) { return $true }
-    return $false
+    return $bytes[0] -eq 100 -and $bytes[1] -ge 64 -and $bytes[1] -le 127
 }
 
-function Resolve-IPv4([string]$HostName) {
+function Resolve-PrivateIPv4([string]$HostName, [string]$Description) {
     $parsed = $null
     if ([Net.IPAddress]::TryParse($HostName, [ref]$parsed)) {
-        if ($parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
-            throw "IPv6 is not supported by the JUMP GameModule protocol."
-        }
-        return $parsed
+        $resolved = $parsed
+    } else {
+        $resolved = [Net.Dns]::GetHostAddresses($HostName) |
+            Where-Object { $_.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork } |
+            Select-Object -First 1
     }
-    $resolved = [Net.Dns]::GetHostAddresses($HostName) |
-        Where-Object { $_.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork } |
-        Select-Object -First 1
-    if (-not $resolved) { throw "Could not resolve an IPv4 address for '$HostName'." }
+    if (-not $resolved) { throw "Could not resolve an IPv4 address for $Description '$HostName'." }
+    if (-not (Test-PrivateIPv4 $resolved)) {
+        throw "$Description '$HostName' resolved to non-private address $resolved. Refusing public FLIGHT traffic."
+    }
     return $resolved
 }
 
@@ -47,8 +49,7 @@ function Test-EndpointEqual([Net.IPEndPoint]$Left, [Net.IPEndPoint]$Right) {
 
 function Read-Heartbeat([byte[]]$Data) {
     try {
-        $text = [Text.Encoding]::UTF8.GetString($Data)
-        $message = $text | ConvertFrom-Json
+        $message = ([Text.Encoding]::UTF8.GetString($Data) | ConvertFrom-Json)
         $names = @($message.PSObject.Properties | ForEach-Object { $_.Name })
         if ($names.Count -ne 3 -or
             $names -notcontains "findex" -or
@@ -73,122 +74,179 @@ function Read-Heartbeat([byte[]]$Data) {
     }
 }
 
-if ($ConfigPath) {
-    $configuration = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-    if (-not $ListenAddress) { $ListenAddress = $configuration.listenAddress }
-    if (-not $PSBoundParameters.ContainsKey("ListenPort")) { $ListenPort = [int]$configuration.listenPort }
-    if (-not $AllowedPaperAddress) { $AllowedPaperAddress = $configuration.allowedPaperAddress }
-    if (-not $PSBoundParameters.ContainsKey("FlightHost")) { $FlightHost = $configuration.flightHost }
-    if (-not $PSBoundParameters.ContainsKey("FlightPort")) { $FlightPort = [int]$configuration.flightPort }
-    if (-not $PSBoundParameters.ContainsKey("SubscriberTimeoutSeconds") -and $configuration.subscriberTimeoutSeconds) {
-        $SubscriberTimeoutSeconds = [int]$configuration.subscriberTimeoutSeconds
+function Read-RegistrationAck([byte[]]$Data) {
+    try {
+        $message = ([Text.Encoding]::UTF8.GetString($Data) | ConvertFrom-Json)
+        if ([int]$message.jumpStationAck -ne 1 -or [string]$message.stationId -ne $StationId) {
+            return $null
+        }
+        return [string]$message.status
+    } catch {
+        return $null
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($ListenAddress)) {
-    throw "ListenAddress is required and must be a specific private IPv4 address."
-}
-if ([string]::IsNullOrWhiteSpace($AllowedPaperAddress)) {
-    throw "AllowedPaperAddress is required; the relay will not accept arbitrary subscribers."
-}
-
-$listenIp = Resolve-IPv4 $ListenAddress
-$paperIp = Resolve-IPv4 $AllowedPaperAddress
-$flightIp = Resolve-IPv4 $FlightHost
-if (-not (Test-PrivateIPv4 $listenIp)) {
-    throw "ListenAddress $listenIp is not loopback, RFC1918, or Tailscale CGNAT space. Refusing a public bind."
-}
-if (-not (Test-PrivateIPv4 $paperIp)) {
-    throw "AllowedPaperAddress $paperIp is not a private or Tailscale IPv4 address."
-}
-if (-not (Test-PrivateIPv4 $flightIp)) {
-    throw "FlightHost $flightIp is not a private IPv4 address."
-}
-if ($listenIp.Equals($flightIp) -and $ListenPort -eq $FlightPort) {
-    throw "The relay listen endpoint and FLIGHT endpoint must be different."
+function Save-Health([string]$State, [string]$Detail) {
+    if ([string]::IsNullOrWhiteSpace($HealthPath)) { return }
+    try {
+        $health = [ordered]@{
+            state = $State
+            detail = $Detail
+            stationId = $StationId
+            stationName = $StationName
+            paper = "$($PaperHost):$PaperPort"
+            flight = "$($FlightHost):$FlightPort"
+            updatedUtc = [DateTime]::UtcNow.ToString("o")
+        }
+        $temporary = "$HealthPath.tmp"
+        $json = $health | ConvertTo-Json -Compress
+        [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporary -Destination $HealthPath -Force
+    } catch {
+        Write-Warning "Could not update bridge health file: $($_.Exception.Message)"
+    }
 }
 
-Write-Host "JUMP UDP relay validation" -ForegroundColor Cyan
-Write-Host "  Paper source allowed: $paperIp"
-Write-Host "  Relay listens:        $listenIp`:$ListenPort"
-Write-Host "  FLIGHT target:        $flightIp`:$FlightPort"
-Write-Host "  Public bind:          disabled"
+if ($ConfigPath) {
+    $configuration = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    if (-not $StationId) { $StationId = [string]$configuration.stationId }
+    if (-not $PSBoundParameters.ContainsKey("StationName") -and $configuration.stationName) {
+        $StationName = [string]$configuration.stationName
+    }
+    if (-not $PSBoundParameters.ContainsKey("PaperHost")) { $PaperHost = [string]$configuration.paperHost }
+    if (-not $PSBoundParameters.ContainsKey("PaperPort")) { $PaperPort = [int]$configuration.paperPort }
+    if (-not $PSBoundParameters.ContainsKey("FlightHost")) { $FlightHost = [string]$configuration.flightHost }
+    if (-not $PSBoundParameters.ContainsKey("FlightPort")) { $FlightPort = [int]$configuration.flightPort }
+    if (-not $PSBoundParameters.ContainsKey("RegistrationIntervalSeconds") -and
+        $configuration.registrationIntervalSeconds) {
+        $RegistrationIntervalSeconds = [int]$configuration.registrationIntervalSeconds
+    }
+    if (-not $HealthPath -and $configuration.healthPath) { $HealthPath = [string]$configuration.healthPath }
+}
+
+if ([string]::IsNullOrWhiteSpace($StationId) -or $StationId -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+    throw "StationId is required and must contain 1-64 letters, digits, dots, underscores, or hyphens."
+}
+if ([string]::IsNullOrWhiteSpace($StationName) -or $StationName.Length -gt 80) {
+    throw "StationName must contain 1-80 characters."
+}
+
+$paperIp = Resolve-PrivateIPv4 $PaperHost "Paper host"
+$flightIp = Resolve-PrivateIPv4 $FlightHost "FLIGHT host"
+if ($flightIp.GetAddressBytes()[0] -ne 127) {
+    throw "FLIGHT host '$FlightHost' resolved to $flightIp. The station bridge only permits a local loopback FLIGHT engine."
+}
+$paperEndpoint = New-Object Net.IPEndPoint($paperIp, $PaperPort)
+$flightEndpoint = New-Object Net.IPEndPoint($flightIp, $FlightPort)
+$registrationJson = [ordered]@{
+    jumpStation = 1
+    stationId = $StationId
+    stationName = $StationName
+    bridgeVersion = 1
+} | ConvertTo-Json -Compress
+$registration = [Text.Encoding]::UTF8.GetBytes($registrationJson)
+
+Write-Host "JUMP station bridge validation" -ForegroundColor Cyan
+Write-Host "  Station:        $StationName ($StationId)"
+Write-Host "  Paper registry: $PaperHost ($paperIp):$PaperPort"
+Write-Host "  FLIGHT target:  $FlightHost ($flightIp):$FlightPort"
+Write-Host "  Public traffic: disabled"
 if ($ValidateOnly) {
+    Save-Health "validated" "Configuration is valid; no sockets were opened."
     Write-Host "Configuration is valid; no sockets were opened." -ForegroundColor Green
     exit 0
 }
 
 $paperSocket = $null
 $flightSocket = $null
+$failed = $false
 try {
-    $paperSocket = New-Object Net.Sockets.UdpClient(
-        (New-Object Net.IPEndPoint($listenIp, $ListenPort)))
+    $paperSocket = New-Object Net.Sockets.UdpClient(0)
     $flightSocket = New-Object Net.Sockets.UdpClient(0)
     $paperSocket.Client.Blocking = $false
     $flightSocket.Client.Blocking = $false
-    $flightEndpoint = New-Object Net.IPEndPoint($flightIp, $FlightPort)
-    $subscriber = $null
-    $subscriberExpires = [DateTime]::MinValue
-    $lastFindex = [long]::MinValue
-    $forwardedHeartbeats = 0L
-    $forwardedFrames = 0L
-    $rejectedPackets = 0L
+    $nextRegistration = [DateTime]::MinValue
+    $nextResolve = [DateTime]::UtcNow.AddSeconds(30)
+    $lastHeartbeatFindex = [long]::MinValue
+    $paperLeaseExpires = [DateTime]::MinValue
+    $registrationStatus = "waiting"
+    $registrations = 0L
+    $heartbeats = 0L
+    $frames = 0L
+    $rejected = 0L
     $nextStatus = [DateTime]::UtcNow.AddSeconds(10)
 
-    Write-Host "Relay running. Stop with Ctrl+C." -ForegroundColor Green
+    Save-Health "starting" "Waiting for Paper registration and FLIGHT."
+    Write-Host "Station bridge running in the background. Stop with Ctrl+C." -ForegroundColor Green
     while ($true) {
         $now = [DateTime]::UtcNow
-        if ($subscriber -and $now -gt $subscriberExpires) {
-            Write-Host "Paper subscriber expired: $subscriber" -ForegroundColor Yellow
-            $subscriber = $null
-            $lastFindex = [long]::MinValue
+        if ($now -ge $nextResolve) {
+            $paperIp = Resolve-PrivateIPv4 $PaperHost "Paper host"
+            $paperEndpoint = New-Object Net.IPEndPoint($paperIp, $PaperPort)
+            $nextResolve = $now.AddSeconds(30)
+        }
+        if ($now -ge $nextRegistration) {
+            [void]$paperSocket.Send($registration, $registration.Length, $paperEndpoint)
+            $registrations++
+            $nextRegistration = $now.AddSeconds($RegistrationIntervalSeconds)
         }
 
         while ($paperSocket.Available -gt 0) {
             $source = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
             $data = $paperSocket.Receive([ref]$source)
+            if (-not (Test-EndpointEqual $source $paperEndpoint)) {
+                $rejected++
+                continue
+            }
+            $ack = Read-RegistrationAck $data
+            if ($ack) {
+                $registrationStatus = $ack
+                continue
+            }
             $heartbeat = Read-Heartbeat $data
-            if (-not $source.Address.Equals($paperIp) -or -not $heartbeat) {
-                $rejectedPackets++
+            if (-not $heartbeat -or $heartbeat.Findex -lt $lastHeartbeatFindex) {
+                $rejected++
                 continue
             }
-            if ($subscriber -and -not (Test-EndpointEqual $subscriber $source)) {
-                $rejectedPackets++
-                continue
-            }
-            if ($heartbeat.Findex -lt $lastFindex) {
-                $rejectedPackets++
-                continue
-            }
-            $subscriber = New-Object Net.IPEndPoint($source.Address, $source.Port)
-            $lastFindex = $heartbeat.Findex
-            $effectiveExpiry = [Math]::Min($heartbeat.ExpirySeconds, [double]$SubscriberTimeoutSeconds)
-            $subscriberExpires = $now.AddSeconds($effectiveExpiry)
+            $lastHeartbeatFindex = $heartbeat.Findex
+            $paperLeaseExpires = $now.AddSeconds($heartbeat.ExpirySeconds)
             [void]$flightSocket.Send($data, $data.Length, $flightEndpoint)
-            $forwardedHeartbeats++
+            $heartbeats++
         }
 
         while ($flightSocket.Available -gt 0) {
             $source = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
             $data = $flightSocket.Receive([ref]$source)
             if (-not (Test-EndpointEqual $source $flightEndpoint)) {
-                $rejectedPackets++
+                $rejected++
                 continue
             }
-            if ($subscriber -and [DateTime]::UtcNow -le $subscriberExpires) {
-                [void]$paperSocket.Send($data, $data.Length, $subscriber)
-                $forwardedFrames++
+            if ([DateTime]::UtcNow -le $paperLeaseExpires) {
+                [void]$paperSocket.Send($data, $data.Length, $paperEndpoint)
+                $frames++
             }
         }
 
         if ($now -ge $nextStatus) {
-            Write-Host "relay heartbeats=$forwardedHeartbeats frames=$forwardedFrames rejected=$rejectedPackets subscriber=$subscriber"
+            $state = if ($registrationStatus -in @("registered", "refreshed")) {
+                if ($heartbeats -gt 0) { "healthy" } else { "registered" }
+            } else {
+                "waiting"
+            }
+            $detail = "registrations=$registrations status=$registrationStatus heartbeats=$heartbeats frames=$frames rejected=$rejected"
+            Write-Host "bridge $detail"
+            Save-Health $state $detail
             $nextStatus = $now.AddSeconds(10)
         }
         Start-Sleep -Milliseconds 2
     }
+} catch {
+    $failed = $true
+    Save-Health "failed" $_.Exception.Message
+    throw
 } finally {
     if ($paperSocket) { $paperSocket.Dispose() }
     if ($flightSocket) { $flightSocket.Dispose() }
-    Write-Host "Relay stopped."
+    if (-not $failed) { Save-Health "stopped" "Bridge process stopped." }
+    Write-Host "Station bridge stopped."
 }

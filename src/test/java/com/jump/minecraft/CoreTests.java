@@ -1,9 +1,6 @@
 package com.jump.minecraft;
 
 import java.nio.charset.StandardCharsets;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,38 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public final class CoreTests {
-    @Test
-    void udpClientSubscribesAndReceives() {
-        try (DatagramSocket server = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
-            server.setSoTimeout(2_000);
-            OrderedFrameStore store = new OrderedFrameStore();
-            FlightEndpointConfig config = new FlightEndpointConfig(
-                    "127.0.0.1", server.getLocalPort(), "127.0.0.1", 0, 100, 1.0, 50);
-            try (JumpUdpClient client = new JumpUdpClient(config, store, ignored -> { }, ignored -> { })) {
-                client.start();
-                byte[] heartbeatBuffer = new byte[2048];
-                DatagramPacket heartbeat = new DatagramPacket(heartbeatBuffer, heartbeatBuffer.length);
-                server.receive(heartbeat);
-                String heartbeatJson = new String(
-                        heartbeat.getData(), 0, heartbeat.getLength(), StandardCharsets.UTF_8);
-                assertTrue(heartbeatJson.contains("\"helicopterFlag\":false"), "UDP heartbeat contract");
-
-                String frameJson = "{\"findex\":123,\"state\":\"flying\","
-                        + "\"pos\":{\"x\":1,\"y\":2,\"z\":3},"
-                        + "\"forward\":{\"x\":0,\"y\":0,\"z\":1},"
-                        + "\"up\":{\"x\":0,\"y\":1,\"z\":0}}";
-                byte[] payload = frameJson.getBytes(StandardCharsets.UTF_8);
-                server.send(new DatagramPacket(payload, payload.length, heartbeat.getSocketAddress()));
-                long deadline = System.nanoTime() + 2_000_000_000L;
-                while (store.latest() == null && System.nanoTime() < deadline) Thread.sleep(5L);
-                assertTrue(store.latest() != null, "UDP frame received");
-                assertEquals(123L, store.latest().frame().findex(), "UDP frame decoded");
-            }
-        } catch (Exception error) {
-            throw new AssertionError("UDP integration test failed", error);
-        }
-    }
-
     @Test
     void protocolDecodesV1AndBuildsHeartbeat() {
         String json = "{\"findex\":42,\"state\":\"pre_deployed\","
@@ -59,6 +24,11 @@ public final class CoreTests {
         String heartbeat = new String(JumpProtocol.heartbeat(99L, 3.0), StandardCharsets.UTF_8);
         assertTrue(heartbeat.contains("\"findex\":99"), "heartbeat findex");
         assertTrue(heartbeat.contains("\"helicopterFlag\":false"), "required helicopter flag");
+        String fractionalIndex = json.replace("\"findex\":42", "\"findex\":42.5");
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> JumpProtocol.decodeV1(
+                        fractionalIndex.getBytes(StandardCharsets.UTF_8), fractionalIndex.length()),
+                "fractional frame index is rejected");
     }
 
     @Test

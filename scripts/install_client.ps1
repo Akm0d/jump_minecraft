@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$MinecraftServer,
+    [string]$MinecraftServer = "jump",
+    [string]$PaperHost = "jump",
+    [ValidateRange(1, 65535)]
+    [int]$PaperPort = 12101,
+    [string]$StationName = $env:COMPUTERNAME,
     [string]$FlightHost = "127.0.0.1",
     [ValidateRange(1, 65535)]
     [int]$FlightPort = 1201,
@@ -9,15 +12,12 @@ param(
     [string]$FabricLoaderVersion = "0.20.1",
     [string]$FabricInstallerVersion = "1.1.2",
     [string]$VivecraftVersion = "26.3-1.3.17",
-    [string]$RelayListenAddress,
-    [ValidateRange(1, 65535)]
-    [int]$RelayListenPort = 12100,
-    [string]$RelayAllowedPaperAddress,
     [string]$MinecraftHome = (Join-Path $env:APPDATA ".minecraft"),
     [string]$ProfileDirectory = (Join-Path $env:LOCALAPPDATA "JUMP Minecraft\profiles\26.3-vr"),
     [switch]$DryRun,
     [switch]$ValidateOnly,
     [switch]$Repair,
+    [switch]$Uninstall,
     [switch]$NonInteractive
 )
 
@@ -31,6 +31,11 @@ $script:ProfileId = "jump-minecraft-vr-$($MinecraftVersion.Replace('.', '-'))"
 $script:ProfileName = "JUMP Minecraft VR ($MinecraftVersion)"
 $script:VivecraftAsset = "vivecraft-$VivecraftVersion-fabric.jar"
 $script:UserAgent = "jump-minecraft-client-installer/0.1"
+$script:BridgeTaskName = "JUMP Minecraft Station Bridge"
+$script:BridgeRoot = Join-Path $script:AppRoot "bridge"
+$script:BridgeScript = Join-Path $script:BridgeRoot "flight_udp_relay.ps1"
+$script:BridgeConfig = Join-Path $script:AppRoot "station-bridge.json"
+$script:BridgeHealth = Join-Path $script:AppRoot "station-bridge-health.json"
 
 function Write-Step([string]$Message) {
     Write-Host "[JUMP] $Message" -ForegroundColor Cyan
@@ -373,6 +378,123 @@ function Save-JsonFile([string]$Path, $Value, [bool]$BackUp) {
     Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
 
+function Get-StationId {
+    if (Test-Path -LiteralPath $script:BridgeConfig) {
+        try {
+            $existing = Get-Content -LiteralPath $script:BridgeConfig -Raw | ConvertFrom-Json
+            if ([string]$existing.stationId -match '^[A-Za-z0-9._-]{1,64}$') {
+                return [string]$existing.stationId
+            }
+        } catch {
+            Write-Notice "Existing station bridge configuration is unreadable; repair will preserve it beside the replacement."
+        }
+    }
+    return [guid]::NewGuid().ToString()
+}
+
+function Install-StationBridge {
+    $source = Join-Path $PSScriptRoot "flight_udp_relay.ps1"
+    if (-not (Test-Path -LiteralPath $source)) {
+        throw "Station bridge script is missing beside the installer: $source"
+    }
+    if ($ValidateOnly) {
+        Assert-StationBridge
+        return
+    }
+    if ($DryRun) {
+        Write-Step "DRY RUN: would install the self-registering station bridge and current-user scheduled task"
+        return
+    }
+    New-Item -ItemType Directory -Force -Path $script:BridgeRoot | Out-Null
+    Copy-Item -LiteralPath $source -Destination $script:BridgeScript -Force
+    $stationId = Get-StationId
+    $configuration = [ordered]@{
+        stationId = $stationId
+        stationName = $StationName
+        paperHost = $PaperHost
+        paperPort = $PaperPort
+        flightHost = $FlightHost
+        flightPort = $FlightPort
+        registrationIntervalSeconds = 1
+        healthPath = $script:BridgeHealth
+        updatedUtc = [DateTime]::UtcNow.ToString("o")
+    }
+    Save-JsonFile $script:BridgeConfig $configuration $true
+
+    $taskUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -ConfigPath "{1}"' -f $script:BridgeScript, $script:BridgeConfig
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
+    $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $script:BridgeTaskName -Action $action -Trigger $trigger -Settings $settings -Description "Registers this JUMP station with Paper and relays passive FLIGHT telemetry." -Force | Out-Null
+    Start-ScheduledTask -TaskName $script:BridgeTaskName
+    Write-Ready "Station bridge task installed and started as $stationId"
+}
+
+function Assert-StationBridge {
+    $issues = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $script:BridgeScript)) {
+        $issues.Add("station bridge script is missing")
+    }
+    if (-not (Test-Path -LiteralPath $script:BridgeConfig)) {
+        $issues.Add("station bridge configuration is missing")
+    } else {
+        try {
+            $configuration = Get-Content -LiteralPath $script:BridgeConfig -Raw | ConvertFrom-Json
+            if ([string]$configuration.stationId -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+                $issues.Add("station identity is invalid")
+            }
+            if (-not $configuration.paperHost -or -not $configuration.paperPort) {
+                $issues.Add("Paper registration endpoint is missing")
+            }
+        } catch {
+            $issues.Add("station bridge configuration is unreadable")
+        }
+    }
+    $task = Get-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue
+    if (-not $task) { $issues.Add("station bridge scheduled task is missing") }
+    if ($issues.Count -gt 0) { throw "Bridge validation failed: $($issues -join '; ')" }
+    $health = if (Test-Path -LiteralPath $script:BridgeHealth) {
+        (Get-Content -LiteralPath $script:BridgeHealth -Raw | ConvertFrom-Json).state
+    } else {
+        "not reported yet"
+    }
+    Write-Ready "Station bridge is installed (task=$($task.State), health=$health)"
+}
+
+function Uninstall-JumpMinecraft {
+    if ($DryRun) {
+        Write-Step "DRY RUN: would unregister the station bridge task and archive the dedicated JUMP profile"
+        return
+    }
+    $timestamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
+    $backupRoot = Join-Path $script:AppRoot "uninstalled\$timestamp"
+    New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    Unregister-ScheduledTask -TaskName $script:BridgeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $profileFile = Get-LauncherProfileFile
+    if ($profileFile) {
+        $launcher = Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json
+        if ($launcher.profiles -and $launcher.profiles.PSObject.Properties[$script:ProfileId]) {
+            $launcher.profiles.PSObject.Properties.Remove($script:ProfileId)
+            Save-JsonFile $profileFile $launcher $true
+        }
+    }
+    if (Test-Path -LiteralPath $ProfileDirectory) {
+        Move-Item -LiteralPath $ProfileDirectory -Destination (Join-Path $backupRoot "profile")
+    }
+    if (Test-Path -LiteralPath $script:BridgeRoot) {
+        Move-Item -LiteralPath $script:BridgeRoot -Destination (Join-Path $backupRoot "bridge")
+    }
+    foreach ($owned in @($script:BridgeConfig, $script:BridgeHealth)) {
+        if (Test-Path -LiteralPath $owned) {
+            Move-Item -LiteralPath $owned -Destination $backupRoot
+        }
+    }
+    Write-Ready "JUMP-owned profile and bridge were removed; recoverable files are in $backupRoot"
+    Write-Notice "Shared launcher, Fabric libraries, Java runtime, saves outside the JUMP profile, and credentials were preserved."
+}
+
 function Install-IsolatedLauncherProfile([string]$ProfileFile) {
     if ($DryRun) {
         Write-Step "DRY RUN: would create launcher profile '$script:ProfileName' using $ProfileDirectory"
@@ -432,14 +554,14 @@ function Save-ClientConfiguration {
         profileName = $script:ProfileName
         profileDirectory = $ProfileDirectory
         flight = [ordered]@{ host = $FlightHost; port = $FlightPort }
-        updatedUtc = [DateTime]::UtcNow.ToString("o")
-    }
-    if ($RelayListenAddress) {
-        $configuration["relay"] = [ordered]@{
-            listenAddress = $RelayListenAddress
-            listenPort = $RelayListenPort
-            allowedPaperAddress = $RelayAllowedPaperAddress
+        station = [ordered]@{
+            name = $StationName
+            paperHost = $PaperHost
+            paperPort = $PaperPort
+            taskName = $script:BridgeTaskName
+            healthPath = $script:BridgeHealth
         }
+        updatedUtc = [DateTime]::UtcNow.ToString("o")
     }
     Save-JsonFile (Join-Path $ProfileDirectory "jump-client.json") $configuration $false
     $instructions = @"
@@ -452,31 +574,14 @@ Open the official Minecraft Launcher, select the profile above, and click Play.
 In Multiplayer, add the server address exactly as shown above. This installer
 does not edit servers.dat or authentication data.
 
-FLIGHT endpoint is separate from Minecraft matchmaking:
+The JUMP station bridge starts automatically at Windows logon and registers
+with Paper at $PaperHost`:$PaperPort. Its health is reported in:
+  $script:BridgeHealth
+
+FLIGHT remains local and separate from Minecraft matchmaking:
   $FlightHost`:$FlightPort
 "@
     [IO.File]::WriteAllText((Join-Path $ProfileDirectory "README.txt"), $instructions, (New-Object Text.UTF8Encoding($false)))
-}
-
-function Save-RelayConfiguration {
-    if (-not $RelayListenAddress) { return }
-    if ([string]::IsNullOrWhiteSpace($RelayAllowedPaperAddress)) {
-        throw "RelayAllowedPaperAddress is required whenever RelayListenAddress is set."
-    }
-    if ($DryRun) {
-        Write-Step "DRY RUN: would configure the optional private FLIGHT relay on $RelayListenAddress`:$RelayListenPort"
-        return
-    }
-    $relay = [ordered]@{
-        listenAddress = $RelayListenAddress
-        listenPort = $RelayListenPort
-        allowedPaperAddress = $RelayAllowedPaperAddress
-        flightHost = $FlightHost
-        flightPort = $FlightPort
-        subscriberTimeoutSeconds = 5
-    }
-    Save-JsonFile (Join-Path $ProfileDirectory "flight-relay.json") $relay $false
-    Write-Ready "Saved private relay configuration; the relay was not started automatically"
 }
 
 function Assert-InstalledState([string]$ProfileFile, $Versions) {
@@ -507,12 +612,12 @@ function Assert-InstalledState([string]$ProfileFile, $Versions) {
 
 try {
     Assert-WindowsHost
-    Assert-ServerAddress $MinecraftServer
-    $hasRelayAddress = -not [string]::IsNullOrWhiteSpace($RelayListenAddress)
-    $hasAllowedPaper = -not [string]::IsNullOrWhiteSpace($RelayAllowedPaperAddress)
-    if ($hasRelayAddress -ne $hasAllowedPaper) {
-        throw "RelayListenAddress and RelayAllowedPaperAddress must be provided together."
+    if ($Uninstall) {
+        Uninstall-JumpMinecraft
+        exit 0
     }
+    Assert-ServerAddress $MinecraftServer
+    Assert-ServerAddress $PaperHost
     Write-Step "Minecraft $MinecraftVersion / Fabric $FabricLoaderVersion / Vivecraft $VivecraftVersion"
     $versions = Confirm-UpstreamVersions
     $launcher = Install-OfficialLauncher
@@ -531,8 +636,8 @@ try {
         Install-IsolatedLauncherProfile $profileFile
         Install-Vivecraft $versions
         Save-ClientConfiguration
-        Save-RelayConfiguration
     }
+    Install-StationBridge
 
     $steamVr = Get-SteamVrState
     if ($steamVr.Installed) {
@@ -546,10 +651,9 @@ try {
     Write-Host "Launcher profile:  $script:ProfileName" -ForegroundColor Yellow
     Write-Host "Game directory:    $ProfileDirectory" -ForegroundColor Yellow
     Write-Host "FLIGHT endpoint:   $FlightHost`:$FlightPort (not the Minecraft Playit address)" -ForegroundColor Yellow
-    if ($RelayListenAddress) {
-        Write-Host "Paper relay target: $RelayListenAddress`:$RelayListenPort" -ForegroundColor Yellow
-        Write-Host "Start separately: .\scripts\flight_udp_relay.ps1 -ConfigPath `"$ProfileDirectory\flight-relay.json`"" -ForegroundColor Yellow
-    }
+    Write-Host "Paper registration: $PaperHost`:$PaperPort" -ForegroundColor Yellow
+    Write-Host "Bridge task:        $script:BridgeTaskName" -ForegroundColor Yellow
+    Write-Host "Bridge health:      $script:BridgeHealth" -ForegroundColor Yellow
     Write-Host ""
     if (-not $DryRun -and -not $ValidateOnly -and -not $NonInteractive) {
         Write-Step "Opening the official Minecraft Launcher"

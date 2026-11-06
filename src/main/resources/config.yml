@@ -1,18 +1,17 @@
 flight:
-  # Address of the Windows FLIGHT host. 127.0.0.1 works only when FLIGHT and
-  # Paper are on the same machine or an explicitly managed UDP relay is used.
-  host: "127.0.0.1"
-  port: 1201
+  # Per-station telemetry older than this is unsafe to apply.
+  stale-after-millis: 1000
 
-  # Local UDP bind. Port 0 asks the OS for an ephemeral source port; heartbeats
-  # and replies use the same socket, as required by GameModule sessions.
-  local-bind-host: "0.0.0.0"
-  local-port: 0
-
+registration:
+  # Station bridges contact this private-LAN UDP listener. Never expose it
+  # through Playit or a public firewall rule.
+  bind-host: "0.0.0.0"
+  port: 12101
   heartbeat-interval-millis: 1000
   subscription-expiry-seconds: 3.0
   socket-timeout-millis: 200
-  stale-after-millis: 1000
+  station-ttl-millis: 5000
+  max-stations: 16
 
 movement:
   blocks-per-meter: 1.0
