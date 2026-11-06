@@ -17,7 +17,8 @@ evidence. Those boundaries remain explicit below.
   states, optional trailing JSON, malformed input, and ordered frame delivery.
 - [x] Maintain independent sessions, endpoints, ordering, controllers, mapping
   origins, stale handling, restoration, and diagnostics for a bounded arbitrary
-  number of stations.
+  number of stations. Controller tests cover landed/reset/stale/stream-reset,
+  disconnect, world-change, unloaded-chunk, and rejected-teleport restoration.
 - [x] Exercise two concurrent 1,000-frame streams without cross-station state.
 - [x] Implement outbound station registration, address/port refresh, duplicate
   identity rejection, capacity bounds, private-address checks, and DHCP takeover
