@@ -11,6 +11,7 @@ param(
     [string]$MinecraftVersion = "26.3",
     [string]$FabricLoaderVersion = "0.20.1",
     [string]$FabricInstallerVersion = "1.1.2",
+    [string]$FabricApiVersion = "0.165.0+26.3",
     [string]$VivecraftVersion = "26.3-1.3.17",
     [string]$MinecraftHome = (Join-Path $env:APPDATA ".minecraft"),
     [string]$ProfileDirectory = (Join-Path $env:LOCALAPPDATA "JUMP Minecraft\profiles\26.3-vr"),
@@ -30,6 +31,8 @@ $script:CacheRoot = Join-Path $script:AppRoot "cache"
 $script:ProfileId = "jump-minecraft-vr-$($MinecraftVersion.Replace('.', '-'))"
 $script:ProfileName = "JUMP Minecraft VR ($MinecraftVersion)"
 $script:VivecraftAsset = "vivecraft-$VivecraftVersion-fabric.jar"
+$script:FabricApiAsset = "fabric-api-$FabricApiVersion.jar"
+$script:CompanionAsset = "jump-minecraft-client-0.1.0.jar"
 $script:UserAgent = "jump-minecraft-client-installer/0.1"
 $script:BridgeTaskName = "JUMP Minecraft Station Bridge"
 $script:BridgeRoot = Join-Path $script:AppRoot "bridge"
@@ -211,6 +214,7 @@ function Find-CompatibleJava {
     }
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
         if ((Get-JavaMajor $candidate) -lt 25) { continue }
+        if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $candidate) "javac.exe"))) { continue }
         if (Test-JavaTls $candidate) { return $candidate }
         Write-Notice "Skipping Java at $candidate because TLS initialization failed."
     }
@@ -219,10 +223,10 @@ function Find-CompatibleJava {
 
 function Install-PortableJava {
     if ($ValidateOnly) {
-        throw "No Java 25 runtime was found. Run without -ValidateOnly to install a private Temurin runtime."
+        throw "No Java 25 JDK was found. Run without -ValidateOnly to install a private Temurin JDK."
     }
-    $assets = @(Get-UpstreamJson "https://api.adoptium.net/v3/assets/latest/25/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse")
-    if ($assets.Count -lt 1) { throw "Adoptium returned no Windows x64 Java 25 runtime." }
+    $assets = @(Get-UpstreamJson "https://api.adoptium.net/v3/assets/latest/25/hotspot?architecture=x64&image_type=jdk&os=windows&vendor=eclipse")
+    if ($assets.Count -lt 1) { throw "Adoptium returned no Windows x64 Java 25 JDK." }
     $package = $assets[0].binary.package
     $archive = Join-Path $script:CacheRoot $package.name
     if ($DryRun) {
@@ -238,8 +242,10 @@ function Install-PortableJava {
     $java = Get-ChildItem -LiteralPath $staging -Filter java.exe -File -Recurse |
         Where-Object { $_.FullName -match '\\bin\\java\.exe$' } |
         Select-Object -First 1
-    if (-not $java -or (Get-JavaMajor $java.FullName) -lt 25 -or -not (Test-JavaTls $java.FullName)) {
-        throw "The downloaded Temurin archive did not contain a usable Java 25 runtime with working TLS."
+    $javac = if ($java) { Join-Path (Split-Path -Parent $java.FullName) "javac.exe" } else { $null }
+    if (-not $java -or -not (Test-Path -LiteralPath $javac) -or
+        (Get-JavaMajor $java.FullName) -lt 25 -or -not (Test-JavaTls $java.FullName)) {
+        throw "The downloaded Temurin archive did not contain a usable Java 25 JDK with working TLS."
     }
     $relative = $java.FullName.Substring($staging.Length).TrimStart('\')
     if (Test-Path -LiteralPath $runtimeRoot) {
@@ -362,6 +368,15 @@ function Confirm-UpstreamVersions {
         throw "The official Vivecraft release has no verifiable Fabric asset named $script:VivecraftAsset."
     }
     $vivecraftHash = $asset.digest.Substring(7).ToLowerInvariant()
+    $fabricApiUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/$FabricApiVersion/$script:FabricApiAsset"
+    $fabricApiHashResponse = Invoke-WebRequest -Uri "$fabricApiUrl.sha256" -Headers @{ "User-Agent" = $script:UserAgent } -UseBasicParsing
+    $fabricApiHashContent = if ($fabricApiHashResponse.Content -is [byte[]]) {
+        [Text.Encoding]::ASCII.GetString($fabricApiHashResponse.Content)
+    } else { [string]$fabricApiHashResponse.Content }
+    $fabricApiHash = $fabricApiHashContent.Trim()
+    if ($fabricApiHash -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "Fabric API $FabricApiVersion has no valid SHA-256 sidecar."
+    }
     if ([version]$FabricLoaderVersion -lt [version]"0.16.1") {
         throw "Vivecraft $VivecraftVersion requires Fabric Loader 0.16.1 or newer."
     }
@@ -369,7 +384,68 @@ function Confirm-UpstreamVersions {
         FabricInstallerUrl = $installer.url
         VivecraftUrl = $asset.browser_download_url
         VivecraftHash = $vivecraftHash
+        FabricApiUrl = $fabricApiUrl
+        FabricApiHash = $fabricApiHash.ToLowerInvariant()
     }
+}
+
+function Install-JumpCompanion([string]$JavaPath, $Versions) {
+    $gradle = Join-Path (Split-Path -Parent $PSScriptRoot) "gradlew.bat"
+    if (-not (Test-Path -LiteralPath $gradle)) {
+        throw "The Gradle wrapper is missing beside the cloned JUMP repository: $gradle"
+    }
+    if ($DryRun) {
+        Write-Step "DRY RUN: would build and install the JUMP Fabric companion and Fabric API"
+        return
+    }
+    $previousJavaHome = $env:JAVA_HOME
+    try {
+        $env:JAVA_HOME = Split-Path -Parent (Split-Path -Parent $JavaPath)
+        $exitCode = Invoke-ExternalCommand $gradle @(':fabric-client:jar', '--no-daemon')
+        if ($exitCode -ne 0) { throw "The JUMP Fabric companion build exited with code $exitCode." }
+    } finally {
+        $env:JAVA_HOME = $previousJavaHome
+    }
+    $companionSource = Join-Path (Split-Path -Parent $PSScriptRoot) "fabric-client\build\libs\$script:CompanionAsset"
+    if (-not (Test-Path -LiteralPath $companionSource)) {
+        throw "The JUMP Fabric companion was not produced at $companionSource"
+    }
+    $fabricApiCache = Join-Path $script:CacheRoot $script:FabricApiAsset
+    Invoke-TrustedDownload $Versions.FabricApiUrl $fabricApiCache $Versions.FabricApiHash
+    $mods = Join-Path $ProfileDirectory "mods"
+    New-Item -ItemType Directory -Force -Path $mods | Out-Null
+    $companionDestination = Join-Path $mods $script:CompanionAsset
+    $fabricApiDestination = Join-Path $mods $script:FabricApiAsset
+    $managedFile = Join-Path $ProfileDirectory ".jump-managed.json"
+    $managed = if (Test-Path -LiteralPath $managedFile) {
+        Get-Content -LiteralPath $managedFile -Raw | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
+    $oldManagedPaths = @('companionPath', 'fabricApiPath') | ForEach-Object {
+        $property = $managed.PSObject.Properties[$_]
+        if ($property) { $property.Value }
+    }
+    foreach ($oldPath in $oldManagedPaths) {
+        if ($oldPath -and $oldPath -notin @($companionDestination, $fabricApiDestination) -and
+            (Test-Path -LiteralPath $oldPath)) {
+            $backupRoot = Join-Path $ProfileDirectory "backup"
+            New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+            Move-Item -LiteralPath $oldPath -Destination $backupRoot -Force
+        }
+    }
+    Copy-Item -LiteralPath $companionSource -Destination $companionDestination -Force
+    Copy-Item -LiteralPath $fabricApiCache -Destination $fabricApiDestination -Force
+    foreach ($entry in @{
+        companionPath = $companionDestination
+        companionSha256 = (Get-FileHash -LiteralPath $companionDestination -Algorithm SHA256).Hash.ToLowerInvariant()
+        fabricApiPath = $fabricApiDestination
+        fabricApiSha256 = $Versions.FabricApiHash
+        updatedUtc = [DateTime]::UtcNow.ToString("o")
+    }.GetEnumerator()) {
+        if ($managed.PSObject.Properties[$entry.Key]) { $managed.($entry.Key) = $entry.Value }
+        else { $managed | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value }
+    }
+    Save-JsonFile $managedFile $managed $false
+    Write-Ready "Installed the JUMP controls and Fabric API into the isolated profile"
 }
 
 function Install-Fabric([string]$JavaPath, $Versions) {
@@ -425,8 +501,10 @@ function Install-Vivecraft($Versions) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ProfileDirectory "mods") | Out-Null
     $destination = Join-Path $ProfileDirectory "mods\$script:VivecraftAsset"
     $managedFile = Join-Path $ProfileDirectory ".jump-managed.json"
+    $managed = if (Test-Path -LiteralPath $managedFile) {
+        Get-Content -LiteralPath $managedFile -Raw | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
     if (Test-Path -LiteralPath $managedFile) {
-        $managed = Get-Content -LiteralPath $managedFile -Raw | ConvertFrom-Json
         if ($managed.vivecraftPath -and $managed.vivecraftPath -ne $destination -and
             (Test-Path -LiteralPath $managed.vivecraftPath)) {
             $backupRoot = Join-Path $ProfileDirectory "backup"
@@ -435,11 +513,15 @@ function Install-Vivecraft($Versions) {
         }
     }
     Copy-Item -LiteralPath $cachePath -Destination $destination -Force
-    Save-JsonFile $managedFile ([ordered]@{
+    foreach ($entry in @{
         vivecraftPath = $destination
         sha256 = $Versions.VivecraftHash
         updatedUtc = [DateTime]::UtcNow.ToString("o")
-    }) $false
+    }.GetEnumerator()) {
+        if ($managed.PSObject.Properties[$entry.Key]) { $managed.($entry.Key) = $entry.Value }
+        else { $managed | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value }
+    }
+    Save-JsonFile $managedFile $managed $false
     Write-Ready "Installed Vivecraft into isolated mods directory"
 }
 
@@ -508,7 +590,7 @@ function Install-StationBridge {
     if (Get-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue
     }
-    Register-ScheduledTask -TaskName $script:BridgeTaskName -Action $action -Trigger $trigger -Settings $settings -Description "Registers this JUMP station with Paper and relays passive FLIGHT telemetry." -Force | Out-Null
+    Register-ScheduledTask -TaskName $script:BridgeTaskName -Action $action -Trigger $trigger -Settings $settings -Description "Registers this JUMP station, relays FLIGHT telemetry, and carries validated desktop controls." -Force | Out-Null
     Start-ScheduledTask -TaskName $script:BridgeTaskName
     Write-Ready "Station bridge task installed and started as $stationId"
 }
@@ -544,7 +626,7 @@ function Assert-StationBridge {
         try {
             $healthRecord = Get-Content -LiteralPath $script:BridgeHealth -Raw | ConvertFrom-Json
             $health = [string]$healthRecord.state
-            if ($health -notin @("starting", "waiting", "registered", "healthy", "validated")) {
+            if ($health -notin @("starting", "waiting", "registered", "healthy", "degraded", "validated")) {
                 $issues.Add("station bridge health is $health")
             }
             if (-not $healthRecord.updatedUtc) {
@@ -652,6 +734,7 @@ function Save-ClientConfiguration {
         minecraftServer = $MinecraftServer
         minecraftVersion = $MinecraftVersion
         fabricLoaderVersion = $FabricLoaderVersion
+        fabricApiVersion = $FabricApiVersion
         vivecraftVersion = $VivecraftVersion
         profileName = $script:ProfileName
         profileDirectory = $ProfileDirectory
@@ -698,6 +781,16 @@ function Assert-InstalledState([string]$ProfileFile, $Versions) {
         $actual = (Get-FileHash -LiteralPath (Join-Path $ProfileDirectory "mods\$script:VivecraftAsset") -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $Versions.VivecraftHash) { $issues.Add("Vivecraft asset hash is wrong") }
     }
+    foreach ($requiredMod in @($script:FabricApiAsset, $script:CompanionAsset)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $ProfileDirectory "mods\$requiredMod"))) {
+            $issues.Add("Required JUMP mod is missing: $requiredMod")
+        }
+    }
+    $fabricApiPath = Join-Path $ProfileDirectory "mods\$script:FabricApiAsset"
+    if (Test-Path -LiteralPath $fabricApiPath) {
+        $actual = (Get-FileHash -LiteralPath $fabricApiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $Versions.FabricApiHash) { $issues.Add("Fabric API asset hash is wrong") }
+    }
     if (-not $ProfileFile -or -not (Test-Path -LiteralPath $ProfileFile)) {
         $issues.Add("Launcher profile store is missing")
     } else {
@@ -737,6 +830,7 @@ try {
         Install-Fabric $java $versions
         Install-IsolatedLauncherProfile $profileFile
         Install-Vivecraft $versions
+        Install-JumpCompanion $java $versions
         Save-ClientConfiguration
     }
     Install-StationBridge

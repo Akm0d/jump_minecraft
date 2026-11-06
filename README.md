@@ -2,9 +2,11 @@
 
 JumpMinecraft lets several JUMP FLIGHT workstations drive independent players
 on one Paper server. FLIGHT remains authoritative for trajectory and lifecycle;
-Minecraft samples the newest telemetry at server tick rate and renders it. The
-bridge never sends launch, readiness, calibration, canopy, landing, reset,
-collision, or hardware commands.
+Minecraft samples the newest telemetry at server tick rate and renders it.
+The only control request implemented is desktop FLIGHT's existing loopback-only
+`forceJumpEvent`; physical Navigator/OpenVR restrictions remain in FLIGHT. The
+bridge never sends calibration, canopy, landing, reset, collision-force, or
+hardware commands.
 
 The integration supports GameModule JSON v1 and the Windows x64 binary v2
 format used by current FLIGHT installations. It does not require changes to
@@ -17,7 +19,7 @@ current-user scheduled task:
 
 ```text
 FLIGHT 127.0.0.1:1201
-        ^  byte-for-byte subscription/reply relay
+        ^  subscription/reply relay + validated desktop jump request
         |
 station bridge -- outbound registration --> Paper UDP :12101
                                              |
@@ -115,6 +117,14 @@ movement:
   blocks-per-meter: 1.0
   heading-offset-degrees: 0.0
   max-step-blocks: 20.0
+  preload-lookahead-steps: 6
+  max-chunks-per-station: 12
+  max-concurrent-chunk-loads: 8
+  max-retained-chunks: 48
+collision:
+  observation-enabled: true
+  feedback-enabled: false
+  max-distance-blocks: 32.0
 ```
 
 Allow UDP 12101 only on the trusted LAN/private overlay. Do not publish it
@@ -147,10 +157,18 @@ reassigned. Disconnect, kick, manual disarm, and plugin shutdown clear the
 assignment and restore saved player state.
 
 The controller captures the Minecraft anchor on `jumping` and the FLIGHT origin
-on the first flying frame. It restores gravity, flight flags, velocity, and
-related state on every disengagement path. It rejects unsafe movement jumps,
-world changes, and unloaded destination chunks rather than synchronously
-generating chunks.
+on the first flying frame. Destination and look-ahead chunks are prepared with
+Paper's asynchronous chunk API under per-station and global limits. If a chunk
+is late, the player holds the last rendered position under FLIGHT protection,
+newest telemetry continues buffering, and rendering resumes automatically.
+Large moves use bounded catch-up steps; no arbitrary distant chunk is
+synchronously generated on the tick thread.
+
+An assigned player remains in protected presentation through preparing,
+flight, landing, stale telemetry, and chunk delays. FLIGHT mode disables
+gravity/collision and blocks ordinary player movement. FREE mode restores local
+movement while retaining damage and interaction protection. Disconnect, kick,
+unassignment, and plugin shutdown restore the captured pre-JUMP player state.
 
 ## Windows JUMP technician installation
 
@@ -168,8 +186,9 @@ deployment, but routine JUMP technician setup requires no address entry.
 The installer:
 
 - verifies official upstream metadata and downloaded checksums;
-- finds or installs Java 25;
-- installs Fabric and Vivecraft only in `JUMP Minecraft VR (26.3)`;
+- finds or installs a private Java 25 JDK;
+- installs Fabric, Fabric API, Vivecraft, and the JUMP Fabric companion only in
+  `JUMP Minecraft VR (26.3)`;
 - preserves unrelated launcher profiles, mods, saves, and credentials;
 - creates a persistent station identity and bridge configuration;
 - installs and starts `JUMP Minecraft Station Bridge` as a current-user Task
@@ -208,6 +227,40 @@ JUMP technician diagnostics are intentionally short:
 `-ValidateOnly` returns a failure when the bridge task is absent or stopped, or
 when its health is failed, unreadable, or more than 60 seconds old. A newly
 started task may briefly report `not reported yet` before its first health write.
+`degraded` means Paper registration is alive but local FLIGHT is temporarily
+unavailable; the bridge keeps retrying rather than terminating.
+
+## Dedicated client controls
+
+The companion is built and installed by `install_client.ps1` into the isolated
+JUMP profile. It uses Fabric key mappings and plugin messaging—no global
+keyboard hook or extra Windows helper.
+
+- **F1** toggles FLIGHT and FREE modes after Paper validates the player's
+  station assignment.
+- **F2** requests `forceJumpEvent` only for an assigned FLIGHT-mode player with
+  fresh `PREPARING` or `LANDED` telemetry. Paper and the bridge both suppress
+  duplicate presses; the bridge emits the final UDP datagram from loopback.
+
+Within the dedicated profile, F1/F2 are removed from their conflicting vanilla
+bindings. Hearts, hunger, armor, experience, hotbar, held-item tooltip, and the
+crosshair are hidden; menus, chat, and operator messages remain available.
+
+## Terrain collision observation
+
+Paper performs bounded, observation-only block-shape ray traces along rendered
+movement. Diagnostics retain the candidate Minecraft contact point/normal and
+their inverse-mapped FLIGHT-space values. With scale `s`, a contact point is
+translated from the Minecraft anchor, divided by `s`, inverse-rotated by the
+trajectory alignment, then added to the FLIGHT origin. Normals are inverse-
+rotated without scaling and normalized. Bounded rays sample the player's Paper
+bounding box at lower, center, upper, and lateral points against actual block
+collision shapes for terrain and structures. This is diagnostic sampling, not
+a continuous physics solver.
+
+`collision.feedback-enabled` remains `false`. No `pushplayer` force is produced
+or sent. FLIGHT collision-response units and force construction require an
+isolated desktop-simulation validation before feedback can be enabled.
 
 ### Optional visual enhancements
 
@@ -232,6 +285,9 @@ do not add server components without separate approval.
   replayed.
 - Vivecraft/SteamVR coexistence with physical JUMP tracking still requires a
   controlled facility test.
+- The Fabric companion compiles against Minecraft 26.3/Fabric Loader 0.20.1/
+  Fabric API 0.165.0+26.3, but its key handling and HUD behavior have not yet
+  been exercised with Vivecraft on facility hardware.
 
 See [analysis.md](analysis.md) for source evidence, [ROADMAP.md](ROADMAP.md) for
 the distinction between automated evidence and remaining live validation, and

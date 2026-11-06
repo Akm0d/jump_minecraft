@@ -12,6 +12,7 @@ import org.bukkit.Server;
 import org.bukkit.entity.Player;
 
 final class StationManager {
+    private static final long JUMP_REQUEST_COOLDOWN_NANOS = 2_000_000_000L;
     enum RegistrationResult {
         REGISTERED,
         REFRESHED,
@@ -24,6 +25,7 @@ final class StationManager {
     private final int maxStations;
     private final long registrationTtlNanos;
     private final Consumer<String> log;
+    private final ChunkPreloader chunks;
     private final Map<String, StationSession> sessions = new LinkedHashMap<>();
 
     StationManager(
@@ -32,10 +34,21 @@ final class StationManager {
             int maxStations,
             long registrationTtlMillis,
             Consumer<String> log) {
+        this(server, movement, maxStations, registrationTtlMillis, ChunkPreloader.loadedOnly(), log);
+    }
+
+    StationManager(
+            Server server,
+            MovementConfig movement,
+            int maxStations,
+            long registrationTtlMillis,
+            ChunkPreloader chunks,
+            Consumer<String> log) {
         this.server = server;
         this.movement = movement;
         this.maxStations = maxStations;
         this.registrationTtlNanos = registrationTtlMillis * 1_000_000L;
+        this.chunks = chunks;
         this.log = log;
     }
 
@@ -52,6 +65,7 @@ final class StationManager {
                     registration.stationName(),
                     server,
                     movement,
+                    chunks,
                     message -> log.accept("[" + registration.stationId() + "] " + message));
             sessions.put(registration.stationId(), session);
         }
@@ -145,6 +159,27 @@ final class StationManager {
         return snapshot().stream().anyMatch(session -> session.shouldBlockMovement(playerId));
     }
 
+    boolean isProtected(UUID playerId) {
+        return snapshot().stream().anyMatch(session -> session.isProtected(playerId));
+    }
+
+    String toggleMode(UUID playerId) {
+        return snapshot().stream()
+                .filter(session -> session.isAssignedTo(playerId))
+                .findFirst()
+                .map(session -> session.toggleMode(playerId))
+                .orElse("not assigned to a JUMP station");
+    }
+
+    JumpRequestResult requestJump(UUID playerId, long nowNanos) {
+        return snapshot().stream()
+                .filter(session -> session.isAssignedTo(playerId))
+                .findFirst()
+                .map(session -> session.requestJump(
+                        playerId, nowNanos, JUMP_REQUEST_COOLDOWN_NANOS))
+                .orElseGet(() -> JumpRequestResult.rejected("not assigned to a JUMP station"));
+    }
+
     void tick() {
         snapshot().forEach(StationSession::tick);
         for (Player player : server.getOnlinePlayers()) {
@@ -169,6 +204,7 @@ final class StationManager {
 
     void close() {
         snapshot().forEach(session -> session.unassign("plugin shutdown"));
+        chunks.close();
     }
 
     private synchronized StationSession sessionForEndpoint(InetSocketAddress source, long nowNanos) {

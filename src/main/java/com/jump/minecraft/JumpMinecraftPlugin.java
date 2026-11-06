@@ -10,6 +10,7 @@ import org.bukkit.scheduler.BukkitTask;
 public final class JumpMinecraftPlugin extends JavaPlugin {
     private StationManager stations;
     private StationRegistryServer registry;
+    private JumpControlChannel controls;
     private BukkitTask tickTask;
 
     @Override
@@ -20,11 +21,17 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
         try {
             MovementConfig movement = loadMovementConfig();
             StationNetworkConfig network = loadNetworkConfig();
+            ChunkPreloader chunks = new PaperChunkPreloader(
+                    this,
+                    movement.maxChunksPerStation(),
+                    movement.maxConcurrentChunkLoads(),
+                    movement.maxRetainedChunks());
             stations = new StationManager(
                     getServer(),
                     movement,
                     network.maxStations(),
                     network.registrationTtlMillis(),
+                    chunks,
                     message -> getLogger().info(message));
             registry = new StationRegistryServer(
                     network,
@@ -37,11 +44,14 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
             command.setExecutor(executor);
             command.setTabCompleter(new JumpTabCompleter(getServer(), stations));
             getServer().getPluginManager().registerEvents(new StationPlayerListener(stations), this);
+            controls = new JumpControlChannel(stations, registry);
+            getServer().getMessenger().registerIncomingPluginChannel(
+                    this, JumpControlProtocol.CHANNEL, controls);
             tickTask = getServer().getScheduler().runTaskTimer(this, stations::tick, 1L, 1L);
             registry.start();
             getLogger().info(
-                    "JUMP Minecraft multi-station bridge enabled in passive v1/v2 mode; "
-                            + "it sends subscription heartbeats only.");
+                    "JUMP Minecraft multi-station v1/v2 telemetry enabled; "
+                            + "desktop jump requests available, collision feedback disabled.");
         } catch (RuntimeException | IOException error) {
             getLogger().log(Level.SEVERE, "Could not start JUMP bridge", error);
             closeResources();
@@ -66,11 +76,21 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
     }
 
     private MovementConfig loadMovementConfig() {
+        if (getConfig().getBoolean("collision.feedback-enabled", false)) {
+            throw new IllegalArgumentException(
+                    "collision.feedback-enabled is not available until desktop validation is complete");
+        }
         return new MovementConfig(
                 positiveLong("flight.stale-after-millis"),
                 positiveDouble("movement.blocks-per-meter"),
                 getConfig().getDouble("movement.heading-offset-degrees", 0.0),
-                positiveDouble("movement.max-step-blocks"));
+                positiveDouble("movement.max-step-blocks"),
+                getConfig().getInt("movement.preload-lookahead-steps", 6),
+                getConfig().getInt("movement.max-chunks-per-station", 12),
+                getConfig().getInt("movement.max-concurrent-chunk-loads", 8),
+                getConfig().getInt("movement.max-retained-chunks", 48),
+                getConfig().getBoolean("collision.observation-enabled", true),
+                positiveDouble("collision.max-distance-blocks"));
     }
 
     private long positiveLong(String path) {
@@ -92,6 +112,8 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
             tickTask.cancel();
             tickTask = null;
         }
+        getServer().getMessenger().unregisterIncomingPluginChannel(this, JumpControlProtocol.CHANNEL);
+        controls = null;
         if (registry != null) {
             registry.close();
             registry = null;

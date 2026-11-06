@@ -14,4 +14,11 @@ public record Vec3(double x, double y, double z) {
     public double length() {
         return Math.sqrt(x * x + y * y + z * z);
     }
+
+    public Vec3 normalized() {
+        double magnitude = length();
+        return magnitude < 1.0e-12
+                ? new Vec3(0.0, 0.0, 0.0)
+                : new Vec3(x / magnitude, y / magnitude, z / magnitude);
+    }
 }

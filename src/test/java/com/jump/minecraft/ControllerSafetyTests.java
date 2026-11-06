@@ -17,7 +17,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ControllerSafetyTests {
     @Test
-    void restoresOnDisconnectAndUnsafeMovementPaths() {
+    void freeModeKeepsProtectionAndFlightModeRebasesWithoutTeleporting() {
+        Fixture fixture = activeFlight();
+        assertEquals("mode=FREE", fixture.controller.toggleMode(fixture.player.id));
+        assertTrue(fixture.player.gravity && !fixture.player.noPhysics,
+                "FREE restores ordinary local movement physics");
+        assertTrue(fixture.player.invulnerable, "FREE remains protected");
+        assertTrue(!fixture.controller.shouldBlockMovement(fixture.player.id));
+
+        offer(fixture.frames, 3, FlightState.PRE_DEPLOYED, new Vec3(0, 0, 100));
+        fixture.controller.tick();
+        assertEquals(0.0, fixture.player.location.getZ(), 1.0e-6,
+                "telemetry is observed but does not move a FREE player");
+        fixture.player.location = new Location(fixture.world.proxy, 0, 70, 5);
+
+        assertEquals("mode=FLIGHT", fixture.controller.toggleMode(fixture.player.id));
+        fixture.controller.tick();
+        assertEquals(5.0, fixture.player.location.getZ(), 1.0e-6,
+                "returning to FLIGHT anchors at the current safe position");
+        offer(fixture.frames, 4, FlightState.PRE_DEPLOYED, new Vec3(0, 0, 101));
+        fixture.controller.tick();
+        assertEquals(6.0, fixture.player.location.getZ(), 1.0e-6);
+    }
+
+    @Test
+    void distantFrameUsesBoundedCatchupWithoutReleasingControl() {
+        Fixture fixture = activeFlight();
+        offer(fixture.frames, 3, FlightState.PRE_DEPLOYED, new Vec3(0, 0, 100));
+        fixture.controller.tick();
+        assertEquals(20.0, fixture.player.location.getZ(), 1.0e-6);
+        for (int count = 0; count < 4; count++) fixture.controller.tick();
+        assertEquals(100.0, fixture.player.location.getZ(), 1.0e-6);
+        assertProtected(fixture, "bounded catch-up");
+    }
+
+    @Test
+    void restoresOnlyOnDisconnectAndHoldsProtectionOnRenderingFailures() {
         Fixture disconnected = activeFlight();
         disconnected.player.online = false;
         disconnected.controller.tick();
@@ -26,17 +61,21 @@ final class ControllerSafetyTests {
         Fixture changedWorld = activeFlight();
         changedWorld.player.location = new Location(world(), 0, 70, 0);
         continueFlight(changedWorld);
-        assertRestored(changedWorld, true, "world change");
+        assertProtected(changedWorld, "world change");
 
         Fixture unloadedChunk = activeFlight();
         unloadedChunk.world.chunkLoaded = false;
         continueFlight(unloadedChunk);
-        assertRestored(unloadedChunk, true, "unloaded chunk");
+        assertProtected(unloadedChunk, "unloaded chunk");
+        unloadedChunk.world.chunkLoaded = true;
+        unloadedChunk.controller.tick();
+        assertEquals(1.0, unloadedChunk.player.location.getZ(), 1.0e-6,
+                "pending frame resumes automatically when its chunk becomes ready");
 
         Fixture rejectedTeleport = activeFlight();
         rejectedTeleport.player.teleportAccepted = false;
         continueFlight(rejectedTeleport);
-        assertRestored(rejectedTeleport, true, "rejected teleport");
+        assertProtected(rejectedTeleport, "rejected teleport");
     }
 
     private static Fixture activeFlight() {
@@ -70,6 +109,14 @@ final class ControllerSafetyTests {
                 path + " assignment policy");
     }
 
+    private static void assertProtected(Fixture fixture, String path) {
+        assertTrue(!fixture.player.gravity && fixture.player.allowFlight && fixture.player.flying,
+                path + " holds protected FLIGHT controls");
+        assertTrue(fixture.player.noPhysics && fixture.player.invulnerable && !fixture.player.collidable,
+                path + " retains no-collision and damage protection");
+        assertTrue(fixture.controller.isDesignated(fixture.player.id), path + " preserves assignment");
+    }
+
     private static void offer(OrderedFrameStore frames, long index, FlightState state, Vec3 position) {
         frames.offer(new FlightFrame(
                         index, state, position, new Vec3(0, 0, 1), new Vec3(0, 1, 0), true, 30),
@@ -99,6 +146,9 @@ final class ControllerSafetyTests {
         private boolean gravity = true;
         private boolean allowFlight;
         private boolean flying;
+        private boolean noPhysics;
+        private boolean invulnerable;
+        private boolean collidable = true;
         private boolean online = true;
         private boolean teleportAccepted = true;
 
@@ -123,6 +173,12 @@ final class ControllerSafetyTests {
                 case "setAllowFlight" -> { allowFlight = (boolean) args[0]; yield null; }
                 case "isFlying" -> flying;
                 case "setFlying" -> { flying = (boolean) args[0]; yield null; }
+                case "hasNoPhysics" -> noPhysics;
+                case "setNoPhysics" -> { noPhysics = (boolean) args[0]; yield null; }
+                case "isInvulnerable" -> invulnerable;
+                case "setInvulnerable" -> { invulnerable = (boolean) args[0]; yield null; }
+                case "isCollidable" -> collidable;
+                case "setCollidable" -> { collidable = (boolean) args[0]; yield null; }
                 case "getFallDistance" -> 0.0f;
                 case "setFallDistance", "sendMessage" -> null;
                 case "getVelocity" -> new Vector();

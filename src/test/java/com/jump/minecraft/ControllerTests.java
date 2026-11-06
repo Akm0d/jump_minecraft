@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public final class ControllerTests {
     @Test
-    void appliesMovementAndRestoresOnLanding() {
+    void appliesMovementAndRetainsProtectedFlightModeOnLanding() {
         World world = proxy(World.class, (instance, method, args) -> switch (method.getName()) {
             case "isChunkLoaded" -> true;
             default -> defaultValue(instance, method, args);
@@ -49,10 +49,10 @@ public final class ControllerTests {
         offer(frames, 5, FlightState.LANDED, new Vec3(100, 97, 103), new Vec3(0, 0, 1));
         controller.tick();
         assertEquals(7, player.location.getX(), 1.0e-6, "final landed location applied");
-        assertTrue(player.gravity && !player.allowFlight && !player.flying,
-                "normal controls restored at landed");
+        assertTrue(!player.gravity && player.allowFlight && player.flying,
+                "protected FLIGHT controls remain engaged at landed");
         assertTrue(controller.isDesignated(player.id), "landed preserves station assignment");
-        assertTrue(controller.status().contains("ready for next flight"), "station returns to ready");
+        assertTrue(controller.status().contains("protected FLIGHT mode retained"), "station returns to protected ready state");
 
         offer(frames, 6, FlightState.JUMPING, new Vec3(200, 200, 200), new Vec3(0, 0, 1));
         controller.tick();
@@ -62,7 +62,7 @@ public final class ControllerTests {
     }
 
     @Test
-    void restoresOnResetAndStaleFrames() {
+    void holdsProtectedPresentationOnResetAndStaleFrames() {
         World world = proxy(World.class, (instance, method, args) -> switch (method.getName()) {
             case "isChunkLoaded" -> true;
             default -> defaultValue(instance, method, args);
@@ -75,7 +75,7 @@ public final class ControllerTests {
         resetController.tick();
         offer(resetFrames, 2, FlightState.PREPARING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
         resetController.tick();
-        assertTrue(player.gravity, "reset restores gravity");
+        assertFalse(player.gravity, "reset retains protected FLIGHT mode");
 
         OrderedFrameStore staleFrames = new OrderedFrameStore();
         FlightController staleController = controller(player, staleFrames, 1);
@@ -85,7 +85,7 @@ public final class ControllerTests {
         FlightFrame stale = frame(4, FlightState.FLYING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
         staleFrames.offer(stale, System.nanoTime() - 10_000_000L);
         staleController.tick();
-        assertTrue(player.gravity, "stale input restores gravity");
+        assertFalse(player.gravity, "stale input holds protected position without gravity");
         assertTrue(staleController.isDesignated(player.id), "stale input preserves station assignment");
 
         OrderedFrameStore resetStreamFrames = new OrderedFrameStore();
@@ -96,7 +96,7 @@ public final class ControllerTests {
         assertFalse(player.gravity, "launch engages Minecraft control before stream reset");
         resetStreamFrames.clear();
         resetStreamController.tick();
-        assertTrue(player.gravity, "cleared stream restores player control on the next tick");
+        assertFalse(player.gravity, "cleared stream retains protected presentation");
         assertTrue(resetStreamController.isDesignated(player.id),
                 "stream reset preserves the station assignment for reconnect");
     }

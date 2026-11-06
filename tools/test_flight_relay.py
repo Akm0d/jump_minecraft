@@ -8,6 +8,7 @@ import socket
 import subprocess
 import time
 import unittest
+import uuid
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -94,6 +95,25 @@ class FlightRelayTests(unittest.TestCase):
                     forwarded, bridge_flight_endpoint = flight.recvfrom(65_507)
                     self.assertEqual(heartbeat, forwarded)
 
+                    control = json.dumps(
+                        {
+                            "jumpControl": 1,
+                            "stationId": "test-station",
+                            "requestId": str(uuid.uuid4()),
+                            "action": "forceJumpEvent",
+                        },
+                        separators=(",", ":"),
+                    ).encode()
+                    paper.sendto(control, bridge_paper_endpoint)
+                    forwarded_control, control_source = flight.recvfrom(65_507)
+                    self.assertEqual(b'{"forceJumpEvent":true}', forwarded_control)
+                    self.assertEqual(bridge_flight_endpoint, control_source)
+
+                    paper.sendto(control, bridge_paper_endpoint)
+                    flight.settimeout(0.2)
+                    with self.assertRaises(socket.timeout):
+                        flight.recvfrom(65_507)
+
                     frame = b'{"findex":123457,"state":"flying"}'
                     flight.sendto(frame, bridge_flight_endpoint)
                     received, source = receive_until(paper, lambda data: data == frame)
@@ -125,6 +145,40 @@ class FlightRelayTests(unittest.TestCase):
                         bridge.wait(timeout=3)
                     if bridge.stdout:
                         bridge.stdout.close()
+
+    def test_bridge_keeps_registering_while_local_flight_is_unavailable(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as paper:
+            paper.bind(("127.0.0.1", 0))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as temporary:
+                temporary.bind(("127.0.0.1", 0))
+                unavailable_flight_port = temporary.getsockname()[1]
+            bridge = subprocess.Popen(
+                [
+                    powershell_command(), "-NoLogo", "-NoProfile", "-File", str(BRIDGE),
+                    "-StationId", "offline-flight", "-PaperHost", "127.0.0.1",
+                    "-PaperPort", str(paper.getsockname()[1]), "-FlightHost", "127.0.0.1",
+                    "-FlightPort", str(unavailable_flight_port),
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            try:
+                _, endpoint = receive_until(paper, lambda data: b'"jumpStation":1' in data)
+                heartbeat = b'{"findex":1,"expiresInSeconds":1,"helicopterFlag":false}'
+                paper.sendto(heartbeat, endpoint)
+                receive_until(paper, lambda data: b'"jumpStation":1' in data, timeout=3.0)
+                self.assertIsNone(bridge.poll(), "bridge must survive an unavailable FLIGHT UDP port")
+            finally:
+                bridge.terminate()
+                try:
+                    bridge.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    bridge.kill()
+                    bridge.wait(timeout=3)
+                if bridge.stdout:
+                    bridge.stdout.close()
 
     def test_validate_only_accepts_private_hosts(self):
         result = subprocess.run(

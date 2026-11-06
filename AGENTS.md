@@ -7,9 +7,10 @@ needed to display JUMP's authoritative flight trajectory in Minecraft. Keep
 JUMP responsible for flight physics. Minecraft is a renderer/controller target,
 not a replacement physics engine.
 
-Do not add world management, terrain or collision feedback, custom landing
-zones, launchpads, new flight mechanics, or a custom Minecraft client unless a
-future task explicitly changes the scope.
+Do not add world management, custom landing zones, launchpads, or Minecraft-
+owned flight mechanics. The approved scope includes the minimal Fabric
+companion and observation-only terrain collision diagnostics. Collision-force
+feedback remains disabled until separately validated.
 
 The adjacent `/home/akmod/code/jump_flight` repository is reference material
 only. Never modify it from this project. Verify protocol conclusions against
@@ -17,16 +18,17 @@ its source rather than relying solely on `analysis.md`.
 
 ## Repository map
 
-- `src/main/java/com/jump/minecraft/`: Paper plugin, UDP v1 client, lifecycle,
+- `src/main/java/com/jump/minecraft/`: Paper plugin, UDP v1/v2 integration, lifecycle,
   coordinate mapping, and player-state restoration.
 - `src/main/resources/`: `plugin.yml` and default plugin configuration.
 - `src/test/`: JUnit tests, including Paper controller tests.
 - `tools/synthetic_flight.py`: deterministic JUMP UDP v1 synthetic sender.
 - `tools/test_synthetic_flight.py`: synthetic protocol tests.
-- `scripts/install_client.ps1`: idempotent Windows Minecraft/Fabric/Vivecraft
-  setup entry point.
-- `scripts/flight_udp_relay.ps1`: optional private relay for loopback-bound
-  FLIGHT. It is not a control service.
+- `fabric-client/`: dedicated Fabric F1/F2 controls and HUD presentation.
+- `scripts/install_client.ps1`: idempotent Windows Minecraft/Fabric/Vivecraft/
+  companion setup entry point.
+- `scripts/flight_udp_relay.ps1`: private station bridge for registration,
+  loopback-bound FLIGHT telemetry, and validated desktop jump requests.
 - `tools/test_flight_relay.py`: relay integration test; set `POWERSHELL` when
   PowerShell is not on `PATH`.
 - `analysis.md`: source-backed architecture and feasibility investigation.
@@ -36,10 +38,11 @@ its source rather than relying solely on `analysis.md`.
 
 ## Current priority
 
-Follow `ROADMAP.md` in milestone order. The active milestone is **P0 — First
-complete Minecraft flight (before visiting the bay)**. The Windows installer
-and relay were committed to `main` in `6da9b09`, but neither a successful live
-Paper deployment nor a Windows/Vivecraft/SteamVR run has been demonstrated.
+Follow `ROADMAP.md` in milestone order. Facility testing on 2026-11-06 verified
+live v2 decoding, registration, automatic assignment, and a lifecycle through
+`LANDED`; it also exposed unsafe release on an unloaded destination chunk. The
+active milestone is continuous protected rendering plus F1/F2 client controls.
+Windows/Vivecraft validation of those new controls remains outstanding.
 
 Before requesting deployment, confirm the intended source revision, rebuild the
 JAR, run all required tests, record its SHA-256, and prepare exact backup and
@@ -86,17 +89,19 @@ compatible `api-version` and the `/jump` command registration.
 - Accept only monotonically ordered JUMP frames and disengage on stale input.
 - Preserve JUMP as position- and orientation-authoritative; do not apply Elytra
   or Minecraft flight physics.
-- Restore the player's saved gravity, flight, velocity, and related state on
-  landed, stale data, reset/preparing, disarm, disconnect, kick, shutdown, or
-  any safety disengagement.
+- Retain protected presentation on landed, stale data, reset/preparing, and
+  chunk-loading stalls. Restore saved state on explicit unassignment,
+  disconnect, kick, or shutdown.
 - Do not synchronously generate destination chunks during flight.
 
 ## Protocol and safety boundaries
 
-The plugin supports JUMP GameModule UDP v1 JSON. Subscription heartbeats contain
-only `findex`, `expiresInSeconds`, and `helicopterFlag: false`. Do not fabricate
-launch, readiness, calibration, reset, collision, canopy, landing, or hardware
-commands.
+The plugin supports JUMP GameModule UDP v1 JSON and Windows x64 binary v2.
+Subscription heartbeats contain only `findex`, `expiresInSeconds`, and
+`helicopterFlag: false`. The only control is desktop FLIGHT's existing
+`forceJumpEvent`, routed to loopback after assignment/readiness validation. Do
+not fabricate physical launch, readiness, calibration, reset, collision force,
+canopy, landing, or hardware commands.
 
 The optional relay exists only when Paper cannot directly reach a loopback-bound
 FLIGHT service. Keep these properties intact:

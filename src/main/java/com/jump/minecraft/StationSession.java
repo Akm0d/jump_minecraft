@@ -18,16 +18,18 @@ final class StationSession {
     private long rejectedFrames;
     private String lastProtocol = "none";
     private String lastError = "waiting for registration";
+    private long lastJumpRequestNanos = Long.MIN_VALUE;
 
     StationSession(
             String stationId,
             String stationName,
             Server server,
             MovementConfig movement,
+            ChunkPreloader chunks,
             Consumer<String> log) {
         this.stationId = stationId;
         this.stationName = stationName;
-        controller = new FlightController(server, frames, movement, log);
+        controller = new FlightController(stationId, server, frames, movement, chunks, log);
     }
 
     synchronized boolean register(StationRegistration registration, long ttlNanos) {
@@ -106,6 +108,30 @@ final class StationSession {
 
     boolean shouldBlockMovement(UUID playerId) {
         return controller.shouldBlockMovement(playerId);
+    }
+
+    boolean isProtected(UUID playerId) {
+        return controller.isProtected(playerId);
+    }
+
+    String toggleMode(UUID playerId) {
+        return controller.toggleMode(playerId);
+    }
+
+    boolean readyForJumpRequest(UUID playerId) {
+        return controller.readyForJumpRequest(playerId);
+    }
+
+    synchronized JumpRequestResult requestJump(UUID playerId, long nowNanos, long cooldownNanos) {
+        if (!controller.readyForJumpRequest(playerId)) {
+            return JumpRequestResult.rejected("FLIGHT mode is not ready");
+        }
+        if (lastJumpRequestNanos != Long.MIN_VALUE
+                && nowNanos - lastJumpRequestNanos < cooldownNanos) {
+            return JumpRequestResult.rejected("jump request cooldown is active");
+        }
+        lastJumpRequestNanos = nowNanos;
+        return JumpRequestResult.accepted(StationControlRequest.forceJump(stationId));
     }
 
     String id() {

@@ -17,3 +17,14 @@ movement:
   blocks-per-meter: 1.0
   heading-offset-degrees: 0.0
   max-step-blocks: 20.0
+  # Async generation/loading is bounded for all registered stations.
+  preload-lookahead-steps: 6
+  max-chunks-per-station: 12
+  max-concurrent-chunk-loads: 8
+  max-retained-chunks: 48
+
+collision:
+  # Observation uses Paper block collision geometry but never sends feedback to FLIGHT.
+  observation-enabled: true
+  feedback-enabled: false
+  max-distance-blocks: 32.0

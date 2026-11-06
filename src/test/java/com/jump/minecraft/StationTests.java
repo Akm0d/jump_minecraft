@@ -181,6 +181,43 @@ final class StationTests {
         assertFalse(PrivateAddresses.isPrivate(InetAddress.getByName("8.8.8.8")));
     }
 
+    @Test
+    void jumpRequestsRequireAssignmentReadinessAndCooldown() throws Exception {
+        Player player = player("desktop", "10.1.10.111");
+        StationManager manager = manager(2, 5_000, List.of(player));
+        InetSocketAddress endpoint = endpoint("10.1.10.111", 45_101);
+        manager.register(registration("bay-1", "Bay 1", endpoint, System.nanoTime()));
+        assertTrue(manager.assignAutomatically(player).startsWith("assigned "));
+
+        JumpRequestResult waiting = manager.requestJump(player.getUniqueId(), 10_000L);
+        assertFalse(waiting.accepted(), "a jump cannot be requested before ready telemetry");
+
+        byte[] preparing = ProtocolV2Tests.frame(1, FlightState.PREPARING, null);
+        manager.acceptFrame(endpoint, preparing, preparing.length, System.nanoTime());
+        JumpRequestResult accepted = manager.requestJump(player.getUniqueId(), 20_000L);
+        assertTrue(accepted.accepted());
+        assertEquals("bay-1", accepted.request().stationId());
+        assertTrue(accepted.request().toJson().contains("\"action\":\"forceJumpEvent\""));
+
+        JumpRequestResult duplicate = manager.requestJump(player.getUniqueId(), 20_000L + 1_000_000_000L);
+        assertFalse(duplicate.accepted(), "repeated key presses are suppressed server-side");
+        assertTrue(duplicate.message().contains("cooldown"));
+    }
+
+    @Test
+    void clientControlPayloadValidationIsExact() {
+        assertEquals(JumpControlProtocol.TOGGLE_MODE,
+                JumpControlProtocol.decode(new byte[] {1, 1}));
+        assertEquals(JumpControlProtocol.REQUEST_JUMP,
+                JumpControlProtocol.decode(new byte[] {1, 2}));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> JumpControlProtocol.decode(new byte[] {1}));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> JumpControlProtocol.decode(new byte[] {2, 1}));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> JumpControlProtocol.decode(new byte[] {1, 3}));
+    }
+
     private static Thread sender(
             StationManager manager,
             InetSocketAddress endpoint,
@@ -224,9 +261,13 @@ final class StationTests {
         Server server = (Server) Proxy.newProxyInstance(
                 Server.class.getClassLoader(),
                 new Class<?>[] {Server.class},
-                (proxy, method, args) -> method.getName().equals("getOnlinePlayers")
-                        ? onlinePlayers
-                        : TestDefaults.value(method));
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getOnlinePlayers" -> onlinePlayers;
+                    case "getPlayer" -> onlinePlayers.stream()
+                            .filter(player -> player.getUniqueId().equals(args[0]))
+                            .findFirst().orElse(null);
+                    default -> TestDefaults.value(method);
+                });
         return new StationManager(
                 server,
                 new MovementConfig(1_000, 1.0, 0.0, 20.0),

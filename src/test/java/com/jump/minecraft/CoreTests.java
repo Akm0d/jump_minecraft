@@ -2,6 +2,11 @@ package com.jump.minecraft;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.block.BlockFace;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.util.Vector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -74,6 +79,50 @@ public final class CoreTests {
         CoordinateMapper mapper = new CoordinateMapper(new Vec3(0, 0, 0), 0, origin, 1, 0);
         MappedPose upward = mapper.map(frame(2, FlightState.FLYING, new Vec3(0, 0, 0), new Vec3(0, 1, 1)));
         assertEquals(-45, upward.pitch(), 1.0e-6, "Minecraft pitch is positive downward");
+    }
+
+    @Test
+    void coordinateMappingInverseSupportsCollisionObservations() {
+        FlightFrame origin = frame(1, FlightState.FLYING, new Vec3(100, 50, -20), new Vec3(0, 0, 1));
+        CoordinateMapper mapper = new CoordinateMapper(new Vec3(10, 70, 30), 90, origin, 2, 0);
+        FlightFrame moved = frame(2, FlightState.FLYING, new Vec3(103, 54, -15), new Vec3(0, 0, 1));
+        MappedPose mapped = mapper.map(moved);
+        Vec3 roundTrip = mapper.toFlightPosition(new Vec3(mapped.x(), mapped.y(), mapped.z()));
+        assertEquals(moved.position().x(), roundTrip.x(), 1.0e-6);
+        assertEquals(moved.position().y(), roundTrip.y(), 1.0e-6);
+        assertEquals(moved.position().z(), roundTrip.z(), 1.0e-6);
+        assertEquals(1.0, mapper.toFlightDirection(new Vec3(-1, 0, 0)).z(), 1.0e-6);
+    }
+
+    @Test
+    void chunkLookaheadAndMovementRemainBounded() {
+        World world = (World) java.lang.reflect.Proxy.newProxyInstance(
+                World.class.getClassLoader(), new Class<?>[] {World.class},
+                (proxy, method, args) -> TestDefaults.value(method));
+        Location from = new Location(world, 0, 70, 0);
+        Location target = new Location(world, 1_000, 70, 1_000);
+        Location step = ChunkPath.boundedStep(from, target, 20);
+        assertEquals(20.0, from.distance(step), 1.0e-6);
+        java.util.List<ChunkPosition> chunks = ChunkPath.upcoming(
+                from, step, null, target, 20, 7);
+        assertTrue(chunks.size() <= 7, "per-station lookahead is capped");
+        assertEquals(ChunkPosition.of(step.getX(), step.getZ()), chunks.getFirst());
+    }
+
+    @Test
+    void collisionObserverUsesPaperGeometryAndMapsContactToFlightSpace() {
+        World world = (World) java.lang.reflect.Proxy.newProxyInstance(
+                World.class.getClassLoader(), new Class<?>[] {World.class},
+                (proxy, method, args) -> method.getName().equals("rayTraceBlocks")
+                        ? new RayTraceResult(new Vector(0, 71, 4), BlockFace.NORTH)
+                        : TestDefaults.value(method));
+        FlightFrame origin = frame(1, FlightState.FLYING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
+        CoordinateMapper mapper = new CoordinateMapper(new Vec3(0, 70, 0), 0, origin, 1, 0);
+        TerrainCollisionObservation observation = new TerrainCollisionObserver(true, 32).observe(
+                world, new Location(world, 0, 70, 0), new Location(world, 0, 70, 8), mapper, 2);
+        assertEquals(new Vec3(0, 71, 4), observation.minecraftPoint());
+        assertEquals(new Vec3(0, 1, 4), observation.flightPoint());
+        assertEquals(new Vec3(0, 0, -1), observation.flightNormal());
     }
 
     @Test

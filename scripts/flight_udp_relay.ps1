@@ -86,6 +86,23 @@ function Read-RegistrationAck([byte[]]$Data) {
     }
 }
 
+function Read-ControlRequest([byte[]]$Data) {
+    try {
+        $message = ([Text.Encoding]::UTF8.GetString($Data) | ConvertFrom-Json)
+        $requestId = [string]$message.requestId
+        $parsedRequestId = [guid]::Empty
+        if ([int]$message.jumpControl -ne 1 -or
+            [string]$message.stationId -ne $StationId -or
+            [string]$message.action -ne "forceJumpEvent" -or
+            -not [guid]::TryParse($requestId, [ref]$parsedRequestId)) {
+            return $null
+        }
+        return [pscustomobject]@{ RequestId = $parsedRequestId.ToString(); Action = "forceJumpEvent" }
+    } catch {
+        return $null
+    }
+}
+
 function Save-Health([string]$State, [string]$Detail) {
     if ([string]::IsNullOrWhiteSpace($HealthPath)) { return }
     try {
@@ -104,6 +121,21 @@ function Save-Health([string]$State, [string]$Detail) {
         Move-Item -LiteralPath $temporary -Destination $HealthPath -Force
     } catch {
         Write-Warning "Could not update bridge health file: $($_.Exception.Message)"
+    }
+}
+
+function Send-FlightDatagram(
+    [Net.Sockets.UdpClient]$Socket,
+    [byte[]]$Data,
+    [Net.IPEndPoint]$Endpoint
+) {
+    try {
+        [void]$Socket.Send($Data, $Data.Length, $Endpoint)
+        return $null
+    } catch [Net.Sockets.SocketException] {
+        # An offline loopback UDP peer may surface as WSAECONNRESET on either
+        # the next send or receive. This is a recoverable FLIGHT availability state.
+        return $_.Exception.Message
     }
 }
 
@@ -162,7 +194,8 @@ $flightSocket = $null
 $failed = $false
 try {
     $paperSocket = New-Object Net.Sockets.UdpClient(0)
-    $flightSocket = New-Object Net.Sockets.UdpClient(0)
+    $flightBind = New-Object Net.IPEndPoint([Net.IPAddress]::Loopback, 0)
+    $flightSocket = New-Object Net.Sockets.UdpClient($flightBind)
     $paperSocket.Client.Blocking = $false
     $flightSocket.Client.Blocking = $false
     $nextRegistration = [DateTime]::MinValue
@@ -173,7 +206,12 @@ try {
     $registrations = 0L
     $heartbeats = 0L
     $frames = 0L
+    $controls = 0L
     $rejected = 0L
+    $lastControlRequestId = ""
+    $lastControlRequestUtc = [DateTime]::MinValue
+    $flightUnavailable = $false
+    $lastFlightError = "none"
     $nextStatus = [DateTime]::UtcNow.AddSeconds(10)
 
     Save-Health "starting" "Waiting for Paper registration and FLIGHT."
@@ -203,6 +241,26 @@ try {
                 $registrationStatus = $ack
                 continue
             }
+            $control = Read-ControlRequest $data
+            if ($control) {
+                if ($control.RequestId -eq $lastControlRequestId -or
+                    $now -lt $lastControlRequestUtc.AddMilliseconds(500)) {
+                    $rejected++
+                    continue
+                }
+                $forceJump = [Text.Encoding]::UTF8.GetBytes('{"forceJumpEvent":true}')
+                $sendError = Send-FlightDatagram $flightSocket $forceJump $flightEndpoint
+                if ($sendError) {
+                    $flightUnavailable = $true
+                    $lastFlightError = $sendError
+                    $rejected++
+                    continue
+                }
+                $lastControlRequestId = $control.RequestId
+                $lastControlRequestUtc = $now
+                $controls++
+                continue
+            }
             $heartbeat = Read-Heartbeat $data
             if (-not $heartbeat -or $heartbeat.Findex -lt $lastHeartbeatFindex) {
                 $rejected++
@@ -210,30 +268,46 @@ try {
             }
             $lastHeartbeatFindex = $heartbeat.Findex
             $paperLeaseExpires = $now.AddSeconds($heartbeat.ExpirySeconds)
-            [void]$flightSocket.Send($data, $data.Length, $flightEndpoint)
+            $sendError = Send-FlightDatagram $flightSocket $data $flightEndpoint
+            if ($sendError) {
+                $flightUnavailable = $true
+                $lastFlightError = $sendError
+                continue
+            }
             $heartbeats++
         }
 
-        while ($flightSocket.Available -gt 0) {
-            $source = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
-            $data = $flightSocket.Receive([ref]$source)
-            if (-not (Test-EndpointEqual $source $flightEndpoint)) {
-                $rejected++
-                continue
+        try {
+            while ($flightSocket.Available -gt 0) {
+                $source = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
+                $data = $flightSocket.Receive([ref]$source)
+                if (-not (Test-EndpointEqual $source $flightEndpoint)) {
+                    $rejected++
+                    continue
+                }
+                $flightUnavailable = $false
+                $lastFlightError = "none"
+                if ([DateTime]::UtcNow -le $paperLeaseExpires) {
+                    [void]$paperSocket.Send($data, $data.Length, $paperEndpoint)
+                    $frames++
+                }
             }
-            if ([DateTime]::UtcNow -le $paperLeaseExpires) {
-                [void]$paperSocket.Send($data, $data.Length, $paperEndpoint)
-                $frames++
-            }
+        } catch [Net.Sockets.SocketException] {
+            # Windows reports ICMP port-unreachable as WSAECONNRESET on a later UDP read.
+            # Local FLIGHT may be stopped temporarily; keep Paper registration alive and retry.
+            $flightUnavailable = $true
+            $lastFlightError = $_.Exception.Message
         }
 
         if ($now -ge $nextStatus) {
             $state = if ($registrationStatus -in @("registered", "refreshed")) {
-                if ($heartbeats -gt 0) { "healthy" } else { "registered" }
+                if ($flightUnavailable) { "degraded" }
+                elseif ($heartbeats -gt 0) { "healthy" }
+                else { "registered" }
             } else {
                 "waiting"
             }
-            $detail = "registrations=$registrations status=$registrationStatus heartbeats=$heartbeats frames=$frames rejected=$rejected"
+            $detail = "registrations=$registrations status=$registrationStatus heartbeats=$heartbeats frames=$frames controls=$controls rejected=$rejected flightError=$lastFlightError"
             Write-Host "bridge $detail"
             Save-Health $state $detail
             $nextStatus = $now.AddSeconds(10)

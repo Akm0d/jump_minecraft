@@ -9,6 +9,13 @@ must not require station IP configuration, a relay window, or `/jump arm`.
 Automated evidence is not live-server, Windows launcher, VR, or physical-flight
 evidence. Those boundaries remain explicit below.
 
+Facility evidence reported from the November 6, 2026 session is also recorded
+explicitly: the actual workstation decoded more than 66,000 v2 frames with zero
+rejections, registered and assigned its player automatically, and reached
+`LANDED`. That session also demonstrated the prior failure mode: an unloaded
+destination chunk ended control, after which gravity caused the player to fall
+and die.
+
 ## Verified development baseline (2026-11-06)
 
 - [x] Derive GameFrame v2's 368-byte default-aligned MSVC x64 wire layout from
@@ -65,15 +72,39 @@ evidence. Those boundaries remain explicit below.
 
 ## P1 — Controlled desktop integration
 
-- [ ] Install or repair one development workstation with the zero-argument
-  installer and verify the persistent station ID, scheduled task, health file,
-  registration, and local FLIGHT subscription.
-- [ ] Connect one desktop Minecraft client and verify automatic assignment with
+- [x] On the actual facility workstation, verify registration, the local FLIGHT
+  v2 subscription, more than 66,000 accepted frames with zero rejections, and a
+  complete lifecycle through `LANDED`.
+- [x] Connect a desktop Minecraft client and verify automatic assignment with
   no command.
 - [ ] With a connected player and explicit test authorization, use deterministic
   v1 and v2 streams to observe trajectory, yaw/pitch, and landed restoration.
 - [ ] Exercise stale stream, bridge restart, address/port change, disconnect,
   reconnect, world change, unloaded chunk, and repeat flight.
+
+## P0 — Flight experience reliability (automated implementation)
+
+- [x] Keep assigned players protected through preparing, flight, landing,
+  stale telemetry, rendering stalls, and repeat flights; restore original state
+  only on disconnect, unassignment, kick, or plugin shutdown.
+- [x] Prepare destination and trajectory look-ahead chunks asynchronously with
+  bounded per-station/global queues and tickets. Hold the last safe rendered
+  position until ready, retain newest telemetry, and resume automatically.
+- [x] Bound large trajectory catch-up and preserve independent station state.
+- [x] Add explicit FLIGHT/FREE modes. FLIGHT blocks local motion and disables
+  gravity/collision; FREE permits ordinary movement while retaining immortality
+  and dedicated-experience interaction restrictions.
+- [x] Compile a Minecraft 26.3 Fabric companion with F1/F2 controls and survival
+  HUD suppression; integrate its build, Fabric API, and upgrade/validation into
+  the existing installer.
+- [x] Route validated, cooldown-protected F2 requests through Paper to the
+  assigned bridge and emit only desktop FLIGHT's `forceJumpEvent` from loopback.
+- [x] Keep the Windows bridge registering and retrying when local FLIGHT UDP is
+  temporarily unavailable; report a degraded health state instead of exiting.
+- [x] Add observation-only Paper block-shape collision diagnostics and inverse
+  coordinate mapping. Collision feedback remains disabled.
+- [ ] Exercise the new chunk protection, F1/F2, HUD, bridge recovery, and repeat
+  landing behavior on Windows with a real Minecraft client.
 
 ## P2 — Three-station concurrency
 
@@ -101,6 +132,16 @@ evidence. Those boundaries remain explicit below.
 - [ ] Determine actual physical landing ownership. Space-to-land remains
   unconfirmed; do not claim completion without an observed `landed` sequence.
 
+## P4 — Collision feedback (disabled pending validation)
+
+- [ ] Validate Minecraft contact points, normals, axes, scale, and timing in an
+  isolated desktop FLIGHT simulation.
+- [ ] Derive and validate `pushplayer` force units against FLIGHT/Unreal behavior;
+  do not infer a force from contact geometry alone.
+- [ ] Only after that evidence, implement explicitly enabled, rate-limited,
+  per-station feedback. Never enable feedback for physical-mode FLIGHT without
+  separate facility approval.
+
 ## Optional visual enhancements
 
 - [ ] After baseline desktop and VR validation, evaluate Sodium, Iris,
@@ -113,17 +154,18 @@ evidence. Those boundaries remain explicit below.
 
 ## Future work outside current scope
 
-- Minecraft terrain/collision feedback, custom landing zones, launchpads, world
-  management, new flight mechanics, or a custom Minecraft client.
-- A client identification mod unless real network topology proves deterministic
-  server-side assignment insufficient.
+- Custom landing zones, launchpads, world management, or Minecraft-owned flight
+  physics.
+- A client identification mechanism beyond the current companion unless real
+  network topology proves deterministic server-side assignment insufficient.
 - Public/cloud telemetry paths, databases, containers, or changes to FLIGHT.
 
 ## Working rules
 
 Follow `AGENTS.md`: build against the real Paper API; never package stubs; keep
 network parsing off the Paper main thread and entity/world operations on it;
-restore player state on every safety path; never start synthetic movement before
-a connected player is explicitly controlled for testing; never expose FLIGHT
+retain protected presentation across transient safety stalls and restore saved
+state on explicit release paths; never start synthetic movement before a
+connected player is explicitly controlled for testing; never expose FLIGHT
 traffic publicly; and do not deploy, restart, commit, or push without explicit
 authorization.

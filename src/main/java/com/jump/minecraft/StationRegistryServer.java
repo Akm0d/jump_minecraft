@@ -63,6 +63,24 @@ final class StationRegistryServer implements AutoCloseable {
                 + ", lastError=" + lastError;
     }
 
+    boolean sendControl(StationControlRequest request) {
+        DatagramSocket current = socket;
+        StationSession session = stations.session(request.stationId());
+        InetSocketAddress endpoint = session == null ? null : session.connectedEndpoint(
+                System.nanoTime(), config.registrationTtlMillis() * 1_000_000L);
+        if (current == null || current.isClosed() || endpoint == null) return false;
+        byte[] payload = request.toJson().getBytes(StandardCharsets.UTF_8);
+        try {
+            synchronized (current) {
+                current.send(new DatagramPacket(payload, payload.length, endpoint));
+            }
+            return true;
+        } catch (IOException error) {
+            recordError("control request to " + request.stationId() + " failed: " + error.getMessage());
+            return false;
+        }
+    }
+
     private void run(DatagramSocket activeSocket) {
         byte[] buffer = new byte[MAX_DATAGRAM];
         long nextHeartbeat = 0L;

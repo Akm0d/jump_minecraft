@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "jump-minecraft-client",
+  "version": "${version}",
+  "name": "JUMP Minecraft Client",
+  "description": "Dedicated JUMP controls and presentation for Minecraft 26.3.",
+  "authors": ["JUMP"],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.jump.minecraft.client.JumpMinecraftClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
