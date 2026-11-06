@@ -24,7 +24,7 @@ evidence. Those boundaries remain explicit below.
   after expiry.
 - [x] Implement deterministic address-first automatic player assignment,
   unambiguous single-station fallback, ambiguity refusal, manual diagnostic
-  override, reconnect, and repeat-flight behavior.
+  override, late-registration retry, reconnect, and repeat-flight behavior.
 - [x] Convert the Windows relay into a self-registering background bridge and
   integrate persistent identity, Task Scheduler lifecycle, validate/repair,
   upgrade, and recoverable uninstall into the existing installer.

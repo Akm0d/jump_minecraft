@@ -114,23 +114,26 @@ final class StationTests {
     }
 
     @Test
-    void playerAssignmentUsesOnlyUnambiguousSingleStationFallback() throws Exception {
+    void tickRetriesLateRegistrationWithUnambiguousSingleStationFallback() throws Exception {
         Player remotePlayer = player("remote", "10.1.10.200");
-        StationManager manager = manager(4, 5_000, List.of(remotePlayer));
-        long now = System.nanoTime();
-        manager.register(registration("bay-1", "Bay 1", endpoint("10.1.10.111", 43_101), now));
+        StationManager manager = managerWithPlayer(4, remotePlayer);
 
-        assertTrue(manager.assignAutomatically(remotePlayer).startsWith("assigned remote to bay-1"));
-        assertTrue(manager.session("bay-1").isAssignedTo(remotePlayer.getUniqueId()));
+        manager.tick();
+        registerBayOne(manager, 43_101);
+        assertFalse(manager.session("bay-1").isAssigned(),
+                "registration itself does not mutate Bukkit player state off-thread");
+
+        manager.tick();
+
+        assertBayOneAssigned(manager, remotePlayer);
     }
 
     @Test
     void expiredAssignedStationIsRetainedForSafeReconnect() throws Exception {
         Player player = player("bay1player", "10.1.10.111");
-        StationManager manager = manager(1, 5_000, List.of(player));
+        StationManager manager = managerWithPlayer(1, player);
         long now = System.nanoTime();
-        manager.register(registration(
-                "bay-1", "Bay 1", endpoint("10.1.10.111", 43_201), now));
+        registerBayOne(manager, 43_201);
         assertTrue(manager.assignAutomatically(player).startsWith("assigned bay1player to bay-1"));
 
         assertEquals(StationManager.RegistrationResult.CAPACITY,
@@ -138,7 +141,7 @@ final class StationTests {
                         "bay-2", "Bay 2", endpoint("10.1.10.112", 43_202),
                         now + 6_000_000_000L)),
                 "an assigned station is not evicted merely because registration expired");
-        assertTrue(manager.session("bay-1").isAssignedTo(player.getUniqueId()));
+        assertBayOneAssigned(manager, player);
     }
 
     @Test
@@ -201,6 +204,20 @@ final class StationTests {
 
     private static StationManager manager(int maxStations, long ttlMillis) {
         return manager(maxStations, ttlMillis, List.of());
+    }
+
+    private static StationManager managerWithPlayer(int maxStations, Player player) {
+        return manager(maxStations, 5_000, List.of(player));
+    }
+
+    private static void registerBayOne(StationManager manager, int port) throws Exception {
+        manager.register(registration(
+                "bay-1", "Bay 1", endpoint("10.1.10.111", port), System.nanoTime()));
+    }
+
+    private static void assertBayOneAssigned(StationManager manager, Player player) {
+        assertTrue(manager.session("bay-1").isAssignedTo(player.getUniqueId()),
+                "bay-1 is assigned to the expected player");
     }
 
     private static StationManager manager(int maxStations, long ttlMillis, List<Player> onlinePlayers) {
