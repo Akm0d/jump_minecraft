@@ -36,8 +36,8 @@ evidence. Those boundaries remain explicit below.
   isolation, invalid-control rejection, lease expiry, and loopback-only FLIGHT.
 - [x] Execute the isolated installer idempotency test under Windows PowerShell
   5.1 with Task Scheduler cmdlets mocked: stable identity, repeat task replace,
-  validation, recoverable uninstall, and preservation of unrelated profiles and
-  data all passed.
+  stop-before-upgrade/uninstall, validation, recoverable uninstall, and
+  preservation of unrelated profiles and data all passed.
 - [ ] Run an actual Windows installer install/re-run/repair/validate/uninstall
   cycle and confirm Task Scheduler recovery after logoff/reboot.
 

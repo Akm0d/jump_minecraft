@@ -172,6 +172,9 @@ The installer:
 
 The task starts at user logon; no PowerShell window needs to remain open.
 Configuration and health are under `%LOCALAPPDATA%\JUMP Minecraft`.
+Rerunning the installer performs an in-place upgrade: it stops the owned bridge
+task, refreshes pinned artifacts and configuration while preserving the station
+identity, replaces the task definition, and starts the new bridge instance.
 
 Maintenance modes:
 

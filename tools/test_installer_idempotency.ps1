@@ -34,17 +34,29 @@ function Import-InstallerFunctions([string]$Path) {
 
 $global:registered = 0
 $global:started = 0
+$global:stopped = 0
 $global:unregistered = 0
+$global:taskExists = $false
 function global:New-ScheduledTaskAction { return [pscustomobject]@{ Kind = "action" } }
 function global:New-ScheduledTaskTrigger { return [pscustomobject]@{ Kind = "trigger" } }
 function global:New-ScheduledTaskSettingsSet { return [pscustomobject]@{ Kind = "settings" } }
 function global:Register-ScheduledTask {
     $global:registered++
+    $global:taskExists = $true
     return [pscustomobject]@{ State = "Ready" }
 }
 function global:Start-ScheduledTask { $global:started++ }
-function global:Get-ScheduledTask { return [pscustomobject]@{ State = "Running" } }
-function global:Unregister-ScheduledTask { $global:unregistered++ }
+function global:Stop-ScheduledTask {
+    if ($global:taskExists) { $global:stopped++ }
+}
+function global:Get-ScheduledTask {
+    if ($global:taskExists) { return [pscustomobject]@{ State = "Running" } }
+    return $null
+}
+function global:Unregister-ScheduledTask {
+    $global:unregistered++
+    $global:taskExists = $false
+}
 
 try {
     Import-InstallerFunctions $InstallerPath
@@ -100,11 +112,15 @@ try {
 
     Assert-True ($first.stationId -eq $second.stationId) `
         "Station identity changed on repeat install"
+    Assert-True (@(Get-ChildItem "$global:BridgeConfig.jump-backup-*").Count -eq 1) `
+        "Repeat install did not preserve the previous bridge configuration"
     Assert-True ($first.stationId -match '^[A-Za-z0-9._-]{1,64}$') `
         "Station identity is invalid"
     Assert-True (Test-Path $global:BridgeScript) "Managed bridge script was not installed"
     Assert-True ($global:registered -eq 2 -and $global:started -eq 2) `
         "Scheduled task was not safely replaced and restarted"
+    Assert-True ($global:stopped -eq 1) `
+        "Running bridge task was not stopped before upgrade"
     Assert-StationBridge
 
     Uninstall-JumpMinecraft
@@ -114,9 +130,12 @@ try {
     Assert-True ($null -ne $after.profiles.PSObject.Properties["unrelated"]) `
         "Unrelated launcher profile was removed"
     Assert-True (Test-Path $unrelated) "Unrelated Minecraft data was removed"
+    Assert-True (@(Get-ChildItem "$profileFile.jump-backup-*").Count -eq 1) `
+        "Uninstall did not preserve the previous launcher profile JSON"
     Assert-True (-not (Test-Path $ProfileDirectory)) "Dedicated profile was not removed"
     Assert-True (-not (Test-Path $global:BridgeRoot)) "Managed bridge directory was not removed"
     Assert-True ($global:unregistered -eq 1) "Scheduled task was not unregistered"
+    Assert-True ($global:stopped -eq 2) "Scheduled task was not stopped before uninstall"
     $archives = @(Get-ChildItem (Join-Path $global:AppRoot "uninstalled") -Directory)
     Assert-True ($archives.Count -eq 1) "Recoverable uninstall archive was not created"
     Assert-True (Test-Path (Join-Path $archives[0].FullName "profile\owned.txt")) `

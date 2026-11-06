@@ -364,13 +364,13 @@ function Install-Vivecraft($Versions) {
     Write-Ready "Installed Vivecraft into isolated mods directory"
 }
 
-function Save-JsonFile([string]$Path, $Value, [bool]$BackUp) {
+function Save-JsonFile([string]$Path, $Value, [bool]$CreateBackup) {
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    if ($BackUp -and (Test-Path -LiteralPath $Path)) {
-        $backup = "$Path.jump-backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
-        Copy-Item -LiteralPath $Path -Destination $backup
-        Write-Step "Backed up $Path to $backup"
+    if ($CreateBackup -and (Test-Path -LiteralPath $Path)) {
+        $backupPath = "$Path.jump-backup-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+        Copy-Item -LiteralPath $Path -Destination $backupPath
+        Write-Step "Backed up $Path to $backupPath"
     }
     $temporary = "$Path.tmp"
     $json = $Value | ConvertTo-Json -Depth 100
@@ -426,6 +426,9 @@ function Install-StationBridge {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
     $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    if (Get-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue
+    }
     Register-ScheduledTask -TaskName $script:BridgeTaskName -Action $action -Trigger $trigger -Settings $settings -Description "Registers this JUMP station with Paper and relays passive FLIGHT telemetry." -Force | Out-Null
     Start-ScheduledTask -TaskName $script:BridgeTaskName
     Write-Ready "Station bridge task installed and started as $stationId"
@@ -464,12 +467,13 @@ function Assert-StationBridge {
 
 function Uninstall-JumpMinecraft {
     if ($DryRun) {
-        Write-Step "DRY RUN: would unregister the station bridge task and archive the dedicated JUMP profile"
+        Write-Step "DRY RUN: would stop and unregister the station bridge task and archive the dedicated JUMP profile"
         return
     }
     $timestamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
     $backupRoot = Join-Path $script:AppRoot "uninstalled\$timestamp"
     New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    Stop-ScheduledTask -TaskName $script:BridgeTaskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $script:BridgeTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
     $profileFile = Get-LauncherProfileFile
