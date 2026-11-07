@@ -68,29 +68,30 @@ SHA-256 eba3379e9829b792a112181aef892bb53e8ee5c7c18ba747eb497164c77854a0
 
 ## Flight-experience update pending deployment
 
-The current workspace adds bounded asynchronous chunk preparation, persistent
-FLIGHT/FREE player protection, the Fabric F1/F2 companion, desktop jump request
-routing, bridge recovery when local FLIGHT is unavailable, and observation-only
-collision diagnostics. This update has not been deployed to Alienware or a
+The current workspace adds bounded asynchronous chunk preparation, three-mode
+MINECRAFT/FLIGHT/FLIGHT DESKTOP control, the Fabric F1 companion, guarded desktop
+input routing, bridge recovery when local FLIGHT is unavailable, and disabled-
+by-default collision feedback. This update has not been deployed to Alienware or a
 JUMP workstation. Rebuild and replace the checksum above before its maintenance
 window; do not mistake the previously installed hash for this new artifact.
 
-Final locally tested artifacts for this uncommitted workspace state:
+Final locally tested release-candidate artifacts:
 
 ```text
 build/libs/jump-minecraft-0.1.0.jar
-SHA-256 ea970b6a001c624e18b55255447bbbf2b03984ebc2f4601ad21ace4ee1de6353
+SHA-256 0045a51b66186182ba1b5b65fa8351338712652f68afcb219a0b18c7e41a15ce
 
 fabric-client/build/libs/jump-minecraft-client-0.1.0.jar
-SHA-256 7416a5b42c3e0e56adeaadaf64d6d888eeb005483bf5cba1bdb66621bf068b34
+SHA-256 552984b657222d202b26e0c414e126d66e7306bb842527303ee7386d7fca65b6
 ```
 
 The Paper configuration gains bounded `movement.preload-lookahead-steps`,
 `movement.max-chunks-per-station`, `movement.max-concurrent-chunk-loads`, and
 `movement.max-retained-chunks` settings plus `collision.observation-enabled`,
 `collision.feedback-enabled: false`, and `collision.max-distance-blocks`.
-Preserve the existing station registration configuration. Collision feedback
-must remain disabled.
+Preserve the existing station registration configuration. Production collision
+feedback must remain disabled; isolated desktop simulation requires the
+documented explicit Paper and installer opt-ins on a non-1201 port.
 
 The Windows installer now builds and installs
 `fabric-client\build\libs\jump-minecraft-client-0.1.0.jar` and the pinned

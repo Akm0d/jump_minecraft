@@ -126,24 +126,37 @@ public final class CoreTests {
     }
 
     @Test
+    void collisionFeedbackIsBoundedAndUsesPushPlayerShape() {
+        TerrainCollisionObservation observation = new TerrainCollisionObservation(
+                7, new Vec3(1, 2, 3), new Vec3(0, 1, 0),
+                new Vec3(4, 5, 6), new Vec3(0, 1, 0), 10);
+        TerrainCollisionFeedback feedback = TerrainCollisionFeedback.contact(observation, 20);
+        assertEquals(new Vec3(0, 20, 0), feedback.response());
+        String json = StationControlRequest.collision("dev", feedback).toJson();
+        assertTrue(json.contains("\"action\":\"pushPlayer\""));
+        assertTrue(json.contains("\"hitNormal\":{\"x\":0.0,\"y\":1.0,\"z\":0.0}"));
+    }
+
+    @Test
     void lifecycleCoversLaunchLandingAndReset() {
         FlightLifecycle lifecycle = new FlightLifecycle();
         lifecycle.arm();
-        assertEquals(SessionDecision.WAIT, lifecycle.observe(FlightState.PREPARING), "wait preparing");
-        assertEquals(SessionDecision.CAPTURE_MINECRAFT_ORIGIN, lifecycle.observe(FlightState.JUMPING), "capture on jumping");
-        assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.FLYING), "start flying");
+        assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.PREPARING), "render preparing");
+        assertEquals(SessionDecision.APPLY_TRAJECTORY, lifecycle.observe(FlightState.JUMPING), "follow jumping");
+        assertEquals(SessionDecision.APPLY_TRAJECTORY, lifecycle.observe(FlightState.FLYING), "follow flying");
         assertEquals(SessionDecision.APPLY_TRAJECTORY, lifecycle.observe(FlightState.PRE_DEPLOYED), "follow predeploy");
         assertEquals(SessionDecision.APPLY_TRAJECTORY, lifecycle.observe(FlightState.DEPLOYED), "follow landing");
         assertEquals(SessionDecision.RESTORE_LANDED, lifecycle.observe(FlightState.LANDED), "restore landed");
-        assertFalse(lifecycle.isArmed(), "landing disarms");
+        assertTrue(lifecycle.isArmed(), "landing preserves assignment for repeated flights");
 
-        lifecycle.arm();
         assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.FLYING), "direct flying supported");
         assertEquals(SessionDecision.RESTORE_RESET, lifecycle.observe(FlightState.PREPARING), "preparing resets active session");
+        assertTrue(lifecycle.isArmed(), "reset preserves assignment");
+        assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.PREPARING), "next preparing frame resumes");
 
         lifecycle.arm();
-        lifecycle.observe(FlightState.JUMPING);
-        assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.CANOPY_FLYING), "canopy trajectory followed");
+        assertEquals(SessionDecision.START_TRAJECTORY, lifecycle.observe(FlightState.JUMPING), "jumping can start trajectory");
+        assertEquals(SessionDecision.APPLY_TRAJECTORY, lifecycle.observe(FlightState.CANOPY_FLYING), "canopy trajectory followed");
     }
 
     private static FlightFrame frame(long findex, FlightState state, Vec3 position, Vec3 forward) {

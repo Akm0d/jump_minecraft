@@ -11,6 +11,8 @@ param(
     [int]$FlightPort = 1201,
     [ValidateRange(1, 30)]
     [int]$RegistrationIntervalSeconds = 1,
+    [switch]$EnableDesktopInput,
+    [switch]$EnableCollisionFeedback,
     [string]$HealthPath,
     [switch]$ValidateOnly
 )
@@ -93,14 +95,78 @@ function Read-ControlRequest([byte[]]$Data) {
         $parsedRequestId = [guid]::Empty
         if ([int]$message.jumpControl -ne 1 -or
             [string]$message.stationId -ne $StationId -or
-            [string]$message.action -ne "forceJumpEvent" -or
             -not [guid]::TryParse($requestId, [ref]$parsedRequestId)) {
             return $null
         }
-        return [pscustomobject]@{ RequestId = $parsedRequestId.ToString(); Action = "forceJumpEvent" }
+        $action = [string]$message.action
+        if ($action -eq "desktopInput" -and $EnableDesktopInput) {
+            $inputMessage = $message.input
+            if (-not $inputMessage -or $inputMessage.jump -isnot [bool]) { return $null }
+            $forward = Read-BoundedNumber $inputMessage "forward" 1.0
+            $right = Read-BoundedNumber $inputMessage "right" 1.0
+            $mouseX = Read-BoundedNumber $inputMessage "mouseX" 1000.0
+            $lookPitch = Read-BoundedNumber $inputMessage "lookPitch" 85.0
+            if ($null -eq $forward -or $null -eq $right -or
+                $null -eq $mouseX -or $null -eq $lookPitch) { return $null }
+            $flightMessage = [ordered]@{
+                desktopTestInput = [ordered]@{
+                    forward = $forward; right = $right; vertical = 0.0
+                    mouseX = $mouseX; mouseY = 0.0; lookPitch = $lookPitch
+                    jump = [bool]$inputMessage.jump; reset = $false
+                    deploy = $false; sprint = $false
+                }
+            } | ConvertTo-Json -Compress -Depth 4
+            return [pscustomobject]@{
+                RequestId = $parsedRequestId.ToString()
+                Action = $action
+                FlightData = [Text.Encoding]::UTF8.GetBytes($flightMessage)
+            }
+        }
+        if ($action -eq "pushPlayer" -and $EnableCollisionFeedback) {
+            $collision = $message.collision
+            $response = Read-Vector $collision.response 100.0 $false
+            $hitPoint = Read-Vector $collision.hitPoint 1000000.0 $false
+            $hitNormal = Read-Vector $collision.hitNormal 1.0 $true
+            if ($null -eq $response -or $null -eq $hitPoint -or $null -eq $hitNormal) { return $null }
+            $flightMessage = [ordered]@{
+                pushplayer = [ordered]@{
+                    pos = $response
+                    rot = [ordered]@{ x = 0.0; y = 0.0; z = 0.0 }
+                    hitPt = $hitPoint
+                    hitN = $hitNormal
+                }
+            } | ConvertTo-Json -Compress -Depth 4
+            return [pscustomobject]@{
+                RequestId = $parsedRequestId.ToString()
+                Action = $action
+                FlightData = [Text.Encoding]::UTF8.GetBytes($flightMessage)
+            }
+        }
+        return $null
     } catch {
         return $null
     }
+}
+
+function Read-BoundedNumber($Object, [string]$Name, [double]$Bound) {
+    if ($null -eq $Object -or $null -eq $Object.PSObject.Properties[$Name]) { return $null }
+    try { $value = [double]$Object.$Name } catch { return $null }
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or [Math]::Abs($value) -gt $Bound) {
+        return $null
+    }
+    return $value
+}
+
+function Read-Vector($Object, [double]$Bound, [bool]$RequireUnit) {
+    $x = Read-BoundedNumber $Object "x" $Bound
+    $y = Read-BoundedNumber $Object "y" $Bound
+    $z = Read-BoundedNumber $Object "z" $Bound
+    if ($null -eq $x -or $null -eq $y -or $null -eq $z) { return $null }
+    if ($RequireUnit) {
+        $length = [Math]::Sqrt($x * $x + $y * $y + $z * $z)
+        if ($length -lt 0.99 -or $length -gt 1.01) { return $null }
+    }
+    return [ordered]@{ x = $x; y = $y; z = $z }
 }
 
 function Save-Health([string]$State, [string]$Detail) {
@@ -153,6 +219,14 @@ if ($ConfigPath) {
         $configuration.registrationIntervalSeconds) {
         $RegistrationIntervalSeconds = [int]$configuration.registrationIntervalSeconds
     }
+    $desktopInputProperty = $configuration.PSObject.Properties["enableDesktopInput"]
+    if (-not $PSBoundParameters.ContainsKey("EnableDesktopInput") -and $desktopInputProperty) {
+        $EnableDesktopInput = [bool]$desktopInputProperty.Value
+    }
+    $collisionFeedbackProperty = $configuration.PSObject.Properties["enableCollisionFeedback"]
+    if (-not $PSBoundParameters.ContainsKey("EnableCollisionFeedback") -and $collisionFeedbackProperty) {
+        $EnableCollisionFeedback = [bool]$collisionFeedbackProperty.Value
+    }
     if (-not $HealthPath -and $configuration.healthPath) { $HealthPath = [string]$configuration.healthPath }
 }
 
@@ -161,6 +235,12 @@ if ([string]::IsNullOrWhiteSpace($StationId) -or $StationId -notmatch '^[A-Za-z0
 }
 if ([string]::IsNullOrWhiteSpace($StationName) -or $StationName.Length -gt 80) {
     throw "StationName must contain 1-80 characters."
+}
+if ($EnableCollisionFeedback -and -not $EnableDesktopInput) {
+    throw "Collision feedback requires explicitly enabled desktop input."
+}
+if (($EnableDesktopInput -or $EnableCollisionFeedback) -and $FlightPort -eq 1201) {
+    throw "Desktop input and collision feedback require an isolated FLIGHT port, never production port 1201."
 }
 
 $paperIp = Resolve-PrivateIPv4 $PaperHost "Paper host"
@@ -182,6 +262,8 @@ Write-Host "JUMP station bridge validation" -ForegroundColor Cyan
 Write-Host "  Station:        $StationName ($StationId)"
 Write-Host "  Paper registry: $PaperHost ($paperIp):$PaperPort"
 Write-Host "  FLIGHT target:  $FlightHost ($flightIp):$FlightPort"
+Write-Host "  Desktop input:  $EnableDesktopInput"
+Write-Host "  Collision:      $EnableCollisionFeedback"
 Write-Host "  Public traffic: disabled"
 if ($ValidateOnly) {
     Save-Health "validated" "Configuration is valid; no sockets were opened."
@@ -209,7 +291,8 @@ try {
     $controls = 0L
     $rejected = 0L
     $lastControlRequestId = ""
-    $lastControlRequestUtc = [DateTime]::MinValue
+    $desktopInputActive = $false
+    $lastDesktopInputUtc = [DateTime]::MinValue
     $flightUnavailable = $false
     $lastFlightError = "none"
     $nextStatus = [DateTime]::UtcNow.AddSeconds(10)
@@ -243,13 +326,11 @@ try {
             }
             $control = Read-ControlRequest $data
             if ($control) {
-                if ($control.RequestId -eq $lastControlRequestId -or
-                    $now -lt $lastControlRequestUtc.AddMilliseconds(500)) {
+                if ($control.RequestId -eq $lastControlRequestId) {
                     $rejected++
                     continue
                 }
-                $forceJump = [Text.Encoding]::UTF8.GetBytes('{"forceJumpEvent":true}')
-                $sendError = Send-FlightDatagram $flightSocket $forceJump $flightEndpoint
+                $sendError = Send-FlightDatagram $flightSocket $control.FlightData $flightEndpoint
                 if ($sendError) {
                     $flightUnavailable = $true
                     $lastFlightError = $sendError
@@ -257,7 +338,10 @@ try {
                     continue
                 }
                 $lastControlRequestId = $control.RequestId
-                $lastControlRequestUtc = $now
+                if ($control.Action -eq "desktopInput") {
+                    $desktopInputActive = $true
+                    $lastDesktopInputUtc = $now
+                }
                 $controls++
                 continue
             }
@@ -299,6 +383,13 @@ try {
             $lastFlightError = $_.Exception.Message
         }
 
+        if ($desktopInputActive -and $now -ge $lastDesktopInputUtc.AddMilliseconds(350)) {
+            $neutralJson = '{"desktopTestInput":{"forward":0.0,"right":0.0,"vertical":0.0,"mouseX":0.0,"mouseY":0.0,"lookPitch":0.0,"jump":false,"reset":false,"deploy":false,"sprint":false}}'
+            $neutral = [Text.Encoding]::UTF8.GetBytes($neutralJson)
+            [void](Send-FlightDatagram $flightSocket $neutral $flightEndpoint)
+            $desktopInputActive = $false
+        }
+
         if ($now -ge $nextStatus) {
             $state = if ($registrationStatus -in @("registered", "refreshed")) {
                 if ($flightUnavailable) { "degraded" }
@@ -319,6 +410,10 @@ try {
     Save-Health "failed" $_.Exception.Message
     throw
 } finally {
+    if ($flightSocket -and $desktopInputActive) {
+        $neutral = [Text.Encoding]::UTF8.GetBytes('{"desktopTestInput":{"forward":0.0,"right":0.0,"vertical":0.0,"mouseX":0.0,"mouseY":0.0,"lookPitch":0.0,"jump":false,"reset":false,"deploy":false,"sprint":false}}')
+        [void](Send-FlightDatagram $flightSocket $neutral $flightEndpoint)
+    }
     if ($paperSocket) { $paperSocket.Dispose() }
     if ($flightSocket) { $flightSocket.Dispose() }
     if (-not $failed) { Save-Health "stopped" "Bridge process stopped." }

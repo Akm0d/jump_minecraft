@@ -32,6 +32,11 @@ final class StationRegistryTests {
             sendRegistration(firstBridge, registryEndpoint, "dev");
             assertTrue(receiveJson(firstBridge).contains("\"jumpStationAck\":1"), "registration ack");
             assertTrue(receiveJson(firstBridge).contains("\"helicopterFlag\":false"), "FLIGHT heartbeat");
+            assertTrue(registry.sendControl(StationControlRequest.desktopInput(
+                    "dev", new JumpDesktopInput(1, 0, 2, 10, true))));
+            String desktopControl = receiveJsonContaining(firstBridge, "\"action\":\"desktopInput\"");
+            assertTrue(desktopControl.contains("\"action\":\"desktopInput\""));
+            assertTrue(desktopControl.contains("\"jump\":true"));
 
             byte[] firstFrame = ("{\"findex\":10,\"state\":\"flying\","
                     + "\"pos\":{\"x\":1,\"y\":2,\"z\":3},"
@@ -75,6 +80,15 @@ final class StationRegistryTests {
         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
         socket.receive(packet);
         return new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
+    }
+
+    private static String receiveJsonContaining(DatagramSocket socket, String expected) throws Exception {
+        long deadline = System.nanoTime() + 2_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            String json = receiveJson(socket);
+            if (json.contains(expected)) return json;
+        }
+        throw new AssertionError("did not receive datagram containing " + expected);
     }
 
     private static void awaitFrame(StationManager manager, String stationId, long findex)

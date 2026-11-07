@@ -9,6 +9,7 @@ import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.function.Consumer;
 
 final class StationRegistryServer implements AutoCloseable {
@@ -20,6 +21,7 @@ final class StationRegistryServer implements AutoCloseable {
     private final Consumer<String> warning;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong heartbeatSequence = new AtomicLong();
+    private final ArrayBlockingQueue<StationControlRequest> pendingControls = new ArrayBlockingQueue<>(256);
 
     private volatile DatagramSocket socket;
     private volatile Thread thread;
@@ -68,17 +70,7 @@ final class StationRegistryServer implements AutoCloseable {
         StationSession session = stations.session(request.stationId());
         InetSocketAddress endpoint = session == null ? null : session.connectedEndpoint(
                 System.nanoTime(), config.registrationTtlMillis() * 1_000_000L);
-        if (current == null || current.isClosed() || endpoint == null) return false;
-        byte[] payload = request.toJson().getBytes(StandardCharsets.UTF_8);
-        try {
-            synchronized (current) {
-                current.send(new DatagramPacket(payload, payload.length, endpoint));
-            }
-            return true;
-        } catch (IOException error) {
-            recordError("control request to " + request.stationId() + " failed: " + error.getMessage());
-            return false;
-        }
+        return current != null && !current.isClosed() && endpoint != null && pendingControls.offer(request);
     }
 
     private void run(DatagramSocket activeSocket) {
@@ -90,6 +82,7 @@ final class StationRegistryServer implements AutoCloseable {
                 sendHeartbeats(activeSocket, now);
                 nextHeartbeat = now + config.heartbeatIntervalMillis() * 1_000_000L;
             }
+            sendControls(activeSocket, now);
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
             try {
                 activeSocket.receive(packet);
@@ -101,6 +94,22 @@ final class StationRegistryServer implements AutoCloseable {
                     recordError("registry receive failed: " + error.getMessage());
                     running.set(false);
                 }
+            }
+        }
+    }
+
+    private void sendControls(DatagramSocket activeSocket, long nowNanos) {
+        StationControlRequest request;
+        while ((request = pendingControls.poll()) != null) {
+            StationSession session = stations.session(request.stationId());
+            InetSocketAddress endpoint = session == null ? null : session.connectedEndpoint(
+                    nowNanos, config.registrationTtlMillis() * 1_000_000L);
+            if (endpoint == null) continue;
+            byte[] payload = request.toJson().getBytes(StandardCharsets.UTF_8);
+            try {
+                activeSocket.send(new DatagramPacket(payload, payload.length, endpoint));
+            } catch (IOException error) {
+                recordError("control request to " + request.stationId() + " failed: " + error.getMessage());
             }
         }
     }
@@ -199,5 +208,6 @@ final class StationRegistryServer implements AutoCloseable {
         }
         socket = null;
         thread = null;
+        pendingControls.clear();
     }
 }

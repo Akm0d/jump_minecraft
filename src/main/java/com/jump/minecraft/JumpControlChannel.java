@@ -1,19 +1,28 @@
 package com.jump.minecraft;
 
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 
 final class JumpControlChannel implements PluginMessageListener {
     private final StationManager stations;
-    private final StationRegistryServer registry;
+    private final Plugin plugin;
 
-    JumpControlChannel(StationManager stations, StationRegistryServer registry) {
+    JumpControlChannel(StationManager stations, Plugin plugin) {
         this.stations = stations;
-        this.registry = registry;
+        this.plugin = plugin;
     }
 
     @Override
     public void onPluginMessageReceived(String channel, Player player, byte[] message) {
+        if (JumpDesktopInput.CHANNEL.equals(channel)) {
+            try {
+                stations.forwardDesktopInput(player.getUniqueId(), JumpDesktopInput.decode(message));
+            } catch (IllegalArgumentException ignored) {
+                // Invalid or out-of-mode input is dropped without chat/log flooding.
+            }
+            return;
+        }
         if (!JumpControlProtocol.CHANNEL.equals(channel)) return;
         final byte action;
         try {
@@ -24,18 +33,9 @@ final class JumpControlChannel implements PluginMessageListener {
         }
         if (action == JumpControlProtocol.TOGGLE_MODE) {
             player.sendMessage("JUMP " + stations.toggleMode(player.getUniqueId()));
+            PlayerControlMode mode = stations.mode(player.getUniqueId());
+            if (mode != null) JumpModeProtocol.send(plugin, player, mode);
             return;
         }
-
-        JumpRequestResult result = stations.requestJump(player.getUniqueId(), System.nanoTime());
-        if (!result.accepted()) {
-            player.sendMessage("JUMP request rejected: " + result.message());
-            return;
-        }
-        if (!registry.sendControl(result.request())) {
-            player.sendMessage("JUMP request failed: station bridge is not connected");
-            return;
-        }
-        player.sendMessage("JUMP desktop simulation jump requested.");
     }
 }

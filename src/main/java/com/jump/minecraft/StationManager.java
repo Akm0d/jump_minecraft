@@ -12,7 +12,6 @@ import org.bukkit.Server;
 import org.bukkit.entity.Player;
 
 final class StationManager {
-    private static final long JUMP_REQUEST_COOLDOWN_NANOS = 2_000_000_000L;
     enum RegistrationResult {
         REGISTERED,
         REFRESHED,
@@ -27,6 +26,7 @@ final class StationManager {
     private final Consumer<String> log;
     private final ChunkPreloader chunks;
     private final Map<String, StationSession> sessions = new LinkedHashMap<>();
+    private Consumer<StationControlRequest> controlSender = ignored -> { };
 
     StationManager(
             Server server,
@@ -66,6 +66,7 @@ final class StationManager {
                     server,
                     movement,
                     chunks,
+                    request -> controlSender.accept(request),
                     message -> log.accept("[" + registration.stationId() + "] " + message));
             sessions.put(registration.stationId(), session);
         }
@@ -141,17 +142,24 @@ final class StationManager {
     synchronized String unassignStation(String stationId, String reason) {
         StationSession session = sessions.get(stationId);
         if (session == null) return "unknown station: " + stationId;
+        neutralizeDesktop(session);
         session.unassign(reason);
         return "station " + stationId + " unassigned";
     }
 
     void unassignAll(String reason) {
-        snapshot().forEach(session -> session.unassign(reason));
+        snapshot().forEach(session -> {
+            neutralizeDesktop(session);
+            session.unassign(reason);
+        });
     }
 
     void unassign(UUID playerId, String reason) {
         for (StationSession session : snapshot()) {
-            if (session.isAssignedTo(playerId)) session.unassign(reason);
+            if (session.isAssignedTo(playerId)) {
+                neutralizeDesktop(session);
+                session.unassign(reason);
+            }
         }
     }
 
@@ -164,20 +172,46 @@ final class StationManager {
     }
 
     String toggleMode(UUID playerId) {
-        return snapshot().stream()
-                .filter(session -> session.isAssignedTo(playerId))
-                .findFirst()
-                .map(session -> session.toggleMode(playerId))
-                .orElse("not assigned to a JUMP station");
+        StationSession session = assignedSession(playerId);
+        if (session == null) return "not assigned to a JUMP station";
+        boolean wasDesktop = session.mode() == PlayerControlMode.FLIGHT_DESKTOP;
+        String result = session.toggleMode(playerId);
+        if (wasDesktop && session.mode() != PlayerControlMode.FLIGHT_DESKTOP) sendNeutralDesktop(session);
+        return result;
     }
 
-    JumpRequestResult requestJump(UUID playerId, long nowNanos) {
+    String setMode(UUID playerId, PlayerControlMode mode) {
+        StationSession session = assignedSession(playerId);
+        if (session == null) return "not assigned to a JUMP station";
+        boolean wasDesktop = session.mode() == PlayerControlMode.FLIGHT_DESKTOP;
+        String result = session.setMode(playerId, mode);
+        if (wasDesktop && mode != PlayerControlMode.FLIGHT_DESKTOP) sendNeutralDesktop(session);
+        return result;
+    }
+
+    PlayerControlMode mode(UUID playerId) {
+        StationSession session = assignedSession(playerId);
+        return session == null ? null : session.mode();
+    }
+
+    boolean forwardDesktopInput(UUID playerId, JumpDesktopInput input) {
+        StationSession session = assignedSession(playerId);
+        if (session == null) return false;
+        StationControlRequest request = session.desktopInput(playerId, input);
+        if (request == null) return false;
+        controlSender.accept(request);
+        return true;
+    }
+
+    void setControlSender(Consumer<StationControlRequest> sender) {
+        controlSender = sender;
+    }
+
+    private StationSession assignedSession(UUID playerId) {
         return snapshot().stream()
                 .filter(session -> session.isAssignedTo(playerId))
                 .findFirst()
-                .map(session -> session.requestJump(
-                        playerId, nowNanos, JUMP_REQUEST_COOLDOWN_NANOS))
-                .orElseGet(() -> JumpRequestResult.rejected("not assigned to a JUMP station"));
+                .orElse(null);
     }
 
     void tick() {
@@ -203,7 +237,10 @@ final class StationManager {
     }
 
     void close() {
-        snapshot().forEach(session -> session.unassign("plugin shutdown"));
+        snapshot().forEach(session -> {
+            neutralizeDesktop(session);
+            session.unassign("plugin shutdown");
+        });
         chunks.close();
     }
 
@@ -237,6 +274,16 @@ final class StationManager {
         String message = "assigned " + player.getName() + " to " + station.id() + " (" + reason + ")";
         log.accept(message);
         return message;
+    }
+
+    private void neutralizeDesktop(StationSession session) {
+        if (session.mode() == PlayerControlMode.FLIGHT_DESKTOP) {
+            sendNeutralDesktop(session);
+        }
+    }
+
+    private void sendNeutralDesktop(StationSession session) {
+        controlSender.accept(StationControlRequest.desktopInput(session.id(), JumpDesktopInput.neutral()));
     }
 
     private synchronized List<StationSession> snapshot() {

@@ -8,7 +8,6 @@ import net.minecraft.resources.Identifier;
 record JumpControlPayload(byte action) implements CustomPacketPayload {
     static final byte VERSION = 1;
     static final byte TOGGLE_MODE = 1;
-    static final byte REQUEST_JUMP = 2;
     static final Type<JumpControlPayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath("jump", "control"));
     static final StreamCodec<FriendlyByteBuf, JumpControlPayload> CODEC = StreamCodec.of(
@@ -19,7 +18,7 @@ record JumpControlPayload(byte action) implements CustomPacketPayload {
             buffer -> {
                 byte version = buffer.readByte();
                 byte action = buffer.readByte();
-                if (version != VERSION || (action != TOGGLE_MODE && action != REQUEST_JUMP)) {
+                if (version != VERSION || action != TOGGLE_MODE) {
                     throw new IllegalArgumentException("Unsupported JUMP control payload");
                 }
                 return new JumpControlPayload(action);

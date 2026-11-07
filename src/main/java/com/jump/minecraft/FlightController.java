@@ -8,6 +8,7 @@ import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
+import net.kyori.adventure.text.Component;
 
 public final class FlightController {
     private final String stationId;
@@ -16,6 +17,7 @@ public final class FlightController {
     private final FlightLifecycle lifecycle = new FlightLifecycle();
     private final ChunkPreloader chunks;
     private final TerrainCollisionObserver collisionObserver;
+    private final Consumer<StationControlRequest> controlSender;
     private final Consumer<String> log;
     private final long staleAfterNanos;
     private final double scale;
@@ -23,12 +25,15 @@ public final class FlightController {
     private final double maxStepBlocks;
     private final int preloadLookaheadSteps;
     private final int maxChunksPerStation;
+    private final boolean collisionFeedbackEnabled;
+    private final double collisionResponseAcceleration;
+    private final long collisionFeedbackIntervalNanos;
 
     private UUID playerId;
     private Location minecraftOrigin;
     private CoordinateMapper mapper;
     private PlayerControlSnapshot controlSnapshot;
-    private PlayerControlMode mode = PlayerControlMode.FLIGHT;
+    private PlayerControlMode mode = PlayerControlMode.MINECRAFT;
     private long lastObservedFindex = Long.MIN_VALUE;
     private long lastRenderedFindex = Long.MIN_VALUE;
     private FlightFrame pendingFrame;
@@ -38,13 +43,16 @@ public final class FlightController {
     private UUID teleportingPlayer;
     private long collisionObservations;
     private TerrainCollisionObservation lastCollision;
+    private long lastCollisionFeedbackNanos = Long.MIN_VALUE;
+    private boolean collisionFeedbackActive;
+    private int actionBarTicks;
 
     public FlightController(
             Server server,
             OrderedFrameStore frames,
             MovementConfig movement,
             Consumer<String> log) {
-        this("test", server, frames, movement, ChunkPreloader.loadedOnly(), log);
+        this("test", server, frames, movement, ChunkPreloader.loadedOnly(), ignored -> { }, log);
     }
 
     FlightController(
@@ -53,17 +61,22 @@ public final class FlightController {
             OrderedFrameStore frames,
             MovementConfig movement,
             ChunkPreloader chunks,
+            Consumer<StationControlRequest> controlSender,
             Consumer<String> log) {
         this.stationId = stationId;
         this.server = server;
         this.frames = frames;
         this.chunks = chunks;
+        this.controlSender = controlSender;
         this.staleAfterNanos = movement.staleAfterMillis() * 1_000_000L;
         this.scale = movement.blocksPerMeter();
         this.headingOffset = movement.headingOffsetDegrees();
         this.maxStepBlocks = movement.maxStepBlocks();
         this.preloadLookaheadSteps = movement.preloadLookaheadSteps();
         this.maxChunksPerStation = movement.maxChunksPerStation();
+        this.collisionFeedbackEnabled = movement.collisionFeedbackEnabled();
+        this.collisionResponseAcceleration = movement.collisionResponseAcceleration();
+        this.collisionFeedbackIntervalNanos = movement.collisionFeedbackIntervalMillis() * 1_000_000L;
         this.collisionObserver = new TerrainCollisionObserver(
                 movement.collisionObservationEnabled(), movement.collisionMaxDistanceBlocks());
         this.log = log;
@@ -77,10 +90,10 @@ public final class FlightController {
         unassign("re-assigned", false);
         playerId = player.getUniqueId();
         controlSnapshot = PlayerControlSnapshot.capture(player);
-        mode = PlayerControlMode.FLIGHT;
-        controlSnapshot.engageFlight(player);
+        mode = PlayerControlMode.MINECRAFT;
+        controlSnapshot.engageMinecraft(player);
         resetTrajectory("assigned, waiting for FLIGHT telemetry");
-        player.sendMessage("JUMP station ready in FLIGHT mode.");
+        showMode(player);
     }
 
     public synchronized void disarm(String reason) {
@@ -100,11 +113,11 @@ public final class FlightController {
     }
 
     public synchronized boolean isProtected(UUID id) {
-        return isDesignated(id) && controlSnapshot != null;
+        return isDesignated(id) && controlSnapshot != null && mode.isFlightControlled();
     }
 
     public synchronized boolean shouldBlockMovement(UUID id) {
-        return mode == PlayerControlMode.FLIGHT
+        return mode.isFlightControlled()
                 && controlSnapshot != null
                 && playerId != null
                 && playerId.equals(id)
@@ -112,37 +125,44 @@ public final class FlightController {
     }
 
     public synchronized String toggleMode(UUID id) {
+        return setMode(id, mode.next());
+    }
+
+    public synchronized String setMode(UUID id, PlayerControlMode requested) {
         if (!isDesignated(id)) return "not assigned to a JUMP station";
         Player player = server.getPlayer(id);
         if (player == null || !player.isOnline() || controlSnapshot == null) {
             return "assigned player is not online";
         }
-        mode = mode.toggled();
-        chunks.release(stationId);
-        resetTrajectory("mode changed to " + mode);
-        if (mode == PlayerControlMode.FLIGHT) {
-            controlSnapshot.engageFlight(player);
-            player.sendMessage("JUMP FLIGHT mode: telemetry controls movement.");
-        } else {
-            controlSnapshot.engageFree(player);
-            player.sendMessage("JUMP FREE mode: local movement enabled; protection remains active.");
+        PlayerControlMode previous = mode;
+        mode = requested;
+        if (previous.isFlightControlled() != mode.isFlightControlled()) {
+            chunks.release(stationId);
+            resetTrajectory("mode changed to " + mode.displayName());
         }
-        return "mode=" + mode;
+        if (mode.isFlightControlled()) {
+            controlSnapshot.engageFlight(player);
+        } else {
+            stopCollisionFeedback();
+            controlSnapshot.engageMinecraft(player);
+        }
+        showMode(player);
+        return "mode=" + mode.displayName();
     }
 
-    public synchronized boolean readyForJumpRequest(UUID id) {
-        if (!isDesignated(id) || mode != PlayerControlMode.FLIGHT) return false;
-        OrderedFrameStore.Snapshot snapshot = frames.latest();
-        if (snapshot == null || frames.isStale(System.nanoTime(), staleAfterNanos)) return false;
-        return snapshot.frame().state() == FlightState.PREPARING
-                || snapshot.frame().state() == FlightState.LANDED;
+    public synchronized PlayerControlMode mode() {
+        return mode;
+    }
+
+    public synchronized boolean acceptsDesktopInput(UUID id) {
+        return isDesignated(id) && mode == PlayerControlMode.FLIGHT_DESKTOP;
     }
 
     public synchronized String status() {
         OrderedFrameStore.Snapshot snapshot = frames.latest();
         String frame = snapshot == null ? "none" : snapshot.frame().state() + " #" + snapshot.frame().findex();
         return "player=" + (playerId == null ? "none" : playerId)
-                + ", mode=" + mode
+                + ", mode=" + mode.displayName()
                 + ", active=" + lifecycle.isActive()
                 + ", latest=" + frame
                 + ", rendered=#" + (lastRenderedFindex == Long.MIN_VALUE ? "none" : lastRenderedFindex)
@@ -161,6 +181,10 @@ public final class FlightController {
             return;
         }
         controlSnapshot.enforce(player, mode);
+        if (++actionBarTicks >= 20) {
+            actionBarTicks = 0;
+            showMode(player);
+        }
 
         OrderedFrameStore.Snapshot snapshot = frames.latest();
         if (snapshot == null) {
@@ -174,18 +198,18 @@ public final class FlightController {
 
         FlightFrame frame = snapshot.frame();
         if (frame.findex() != lastObservedFindex) observe(player, frame);
-        if (mode == PlayerControlMode.FLIGHT) renderPending(player);
+        if (mode.isFlightControlled()) renderPending(player);
     }
 
     private void observe(Player player, FlightFrame frame) {
         lastObservedFindex = frame.findex();
         SessionDecision decision = lifecycle.observe(frame.state());
-        if (mode == PlayerControlMode.FREE) {
+        if (mode == PlayerControlMode.MINECRAFT) {
             if (decision == SessionDecision.RESTORE_LANDED
                     || decision == SessionDecision.RESTORE_RESET) {
-                resetTrajectory("FLIGHT lifecycle reset while in FREE mode");
+                resetTrajectory("FLIGHT lifecycle reset while in MINECRAFT mode");
             } else {
-                lastNote = "FREE mode; telemetry buffered at #" + frame.findex();
+                lastNote = "MINECRAFT mode; telemetry buffered at #" + frame.findex();
             }
             return;
         }
@@ -229,7 +253,7 @@ public final class FlightController {
     private void captureMinecraftOrigin(Player player) {
         minecraftOrigin = player.getLocation().clone();
         previousMappedTarget = null;
-        lastNote = "launch detected; protected presentation active";
+        lastNote = "telemetry origin captured; protected presentation active";
     }
 
     private boolean apply(Player player, FlightFrame frame) {
@@ -273,6 +297,7 @@ public final class FlightController {
             lastCollision = collision;
             collisionObservations++;
         }
+        updateCollisionFeedback(frame, collision);
         player.setVelocity(new Vector());
         player.setFallDistance(0.0f);
         boolean moved;
@@ -305,6 +330,7 @@ public final class FlightController {
     }
 
     private void resetTrajectory(String reason) {
+        stopCollisionFeedback();
         lifecycle.arm();
         minecraftOrigin = null;
         mapper = null;
@@ -317,6 +343,7 @@ public final class FlightController {
     }
 
     private void unassign(String reason, boolean notify) {
+        stopCollisionFeedback();
         Player player = playerId == null ? null : server.getPlayer(playerId);
         if (player != null && controlSnapshot != null) {
             controlSnapshot.restore(player);
@@ -335,8 +362,39 @@ public final class FlightController {
         previousMappedTarget = null;
         lastObservedFindex = Long.MIN_VALUE;
         lastRenderedFindex = Long.MIN_VALUE;
-        mode = PlayerControlMode.FLIGHT;
+        mode = PlayerControlMode.MINECRAFT;
         lastNote = reason;
+    }
+
+    private void updateCollisionFeedback(FlightFrame frame, TerrainCollisionObservation collision) {
+        if (!collisionFeedbackEnabled
+                || mode != PlayerControlMode.FLIGHT_DESKTOP
+                || frame.state() != FlightState.FLYING) {
+            stopCollisionFeedback();
+            return;
+        }
+        long now = System.nanoTime();
+        if (collision == null) {
+            stopCollisionFeedback();
+            return;
+        }
+        if (lastCollisionFeedbackNanos != Long.MIN_VALUE
+                && now - lastCollisionFeedbackNanos < collisionFeedbackIntervalNanos) return;
+        controlSender.accept(StationControlRequest.collision(
+                stationId, TerrainCollisionFeedback.contact(collision, collisionResponseAcceleration)));
+        lastCollisionFeedbackNanos = now;
+        collisionFeedbackActive = true;
+    }
+
+    private void stopCollisionFeedback() {
+        if (!collisionFeedbackActive) return;
+        controlSender.accept(StationControlRequest.collision(stationId, TerrainCollisionFeedback.neutral()));
+        collisionFeedbackActive = false;
+        lastCollisionFeedbackNanos = Long.MIN_VALUE;
+    }
+
+    private void showMode(Player player) {
+        player.sendActionBar(Component.text("JUMP mode: " + mode.displayName()));
     }
 
     private static Vec3 vector(Location location) {

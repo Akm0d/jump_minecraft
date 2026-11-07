@@ -18,7 +18,6 @@ final class StationSession {
     private long rejectedFrames;
     private String lastProtocol = "none";
     private String lastError = "waiting for registration";
-    private long lastJumpRequestNanos = Long.MIN_VALUE;
 
     StationSession(
             String stationId,
@@ -26,10 +25,12 @@ final class StationSession {
             Server server,
             MovementConfig movement,
             ChunkPreloader chunks,
+            Consumer<StationControlRequest> controlSender,
             Consumer<String> log) {
         this.stationId = stationId;
         this.stationName = stationName;
-        controller = new FlightController(stationId, server, frames, movement, chunks, log);
+        controller = new FlightController(
+                stationId, server, frames, movement, chunks, controlSender, log);
     }
 
     synchronized boolean register(StationRegistration registration, long ttlNanos) {
@@ -118,20 +119,18 @@ final class StationSession {
         return controller.toggleMode(playerId);
     }
 
-    boolean readyForJumpRequest(UUID playerId) {
-        return controller.readyForJumpRequest(playerId);
+    String setMode(UUID playerId, PlayerControlMode mode) {
+        return controller.setMode(playerId, mode);
     }
 
-    synchronized JumpRequestResult requestJump(UUID playerId, long nowNanos, long cooldownNanos) {
-        if (!controller.readyForJumpRequest(playerId)) {
-            return JumpRequestResult.rejected("FLIGHT mode is not ready");
-        }
-        if (lastJumpRequestNanos != Long.MIN_VALUE
-                && nowNanos - lastJumpRequestNanos < cooldownNanos) {
-            return JumpRequestResult.rejected("jump request cooldown is active");
-        }
-        lastJumpRequestNanos = nowNanos;
-        return JumpRequestResult.accepted(StationControlRequest.forceJump(stationId));
+    PlayerControlMode mode() {
+        return controller.mode();
+    }
+
+    StationControlRequest desktopInput(UUID playerId, JumpDesktopInput input) {
+        return controller.acceptsDesktopInput(playerId)
+                ? StationControlRequest.desktopInput(stationId, input)
+                : null;
     }
 
     String id() {

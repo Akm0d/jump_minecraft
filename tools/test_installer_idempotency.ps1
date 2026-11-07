@@ -92,6 +92,11 @@ try {
     $PaperPort = 12101
     $FlightHost = "127.0.0.1"
     $FlightPort = 1201
+    $EnableDesktopSimulation = $false
+    $EnableCollisionFeedback = $false
+    $global:DesktopOptionSpecified = $false
+    $global:CollisionOptionSpecified = $false
+    $global:FlightPortSpecified = $false
     $DryRun = $false
     $ValidateOnly = $false
     $Repair = $false

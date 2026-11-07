@@ -59,6 +59,8 @@ class FlightRelayTests(unittest.TestCase):
                     "127.0.0.1",
                     "-FlightPort",
                     str(flight_port),
+                    "-EnableDesktopInput",
+                    "-EnableCollisionFeedback",
                 ]
                 bridge = subprocess.Popen(
                     command,
@@ -100,19 +102,48 @@ class FlightRelayTests(unittest.TestCase):
                             "jumpControl": 1,
                             "stationId": "test-station",
                             "requestId": str(uuid.uuid4()),
-                            "action": "forceJumpEvent",
+                            "action": "desktopInput",
+                            "input": {
+                                "forward": 1.0,
+                                "right": -0.25,
+                                "mouseX": 4.0,
+                                "lookPitch": 10.0,
+                                "jump": True,
+                            },
                         },
                         separators=(",", ":"),
                     ).encode()
                     paper.sendto(control, bridge_paper_endpoint)
                     forwarded_control, control_source = flight.recvfrom(65_507)
-                    self.assertEqual(b'{"forceJumpEvent":true}', forwarded_control)
+                    flight_control = json.loads(forwarded_control)
+                    self.assertEqual(1.0, flight_control["desktopTestInput"]["forward"])
+                    self.assertTrue(flight_control["desktopTestInput"]["jump"])
                     self.assertEqual(bridge_flight_endpoint, control_source)
 
                     paper.sendto(control, bridge_paper_endpoint)
                     flight.settimeout(0.2)
                     with self.assertRaises(socket.timeout):
                         flight.recvfrom(65_507)
+
+                    collision = json.dumps(
+                        {
+                            "jumpControl": 1,
+                            "stationId": "test-station",
+                            "requestId": str(uuid.uuid4()),
+                            "action": "pushPlayer",
+                            "collision": {
+                                "response": {"x": 0.0, "y": 20.0, "z": 0.0},
+                                "hitPoint": {"x": 1.0, "y": 2.0, "z": 3.0},
+                                "hitNormal": {"x": 0.0, "y": 1.0, "z": 0.0},
+                            },
+                        },
+                        separators=(",", ":"),
+                    ).encode()
+                    paper.sendto(collision, bridge_paper_endpoint)
+                    forwarded_collision, _ = flight.recvfrom(65_507)
+                    flight_collision = json.loads(forwarded_collision)["pushplayer"]
+                    self.assertEqual(20.0, flight_collision["pos"]["y"])
+                    self.assertEqual(1.0, flight_collision["hitN"]["y"])
 
                     frame = b'{"findex":123457,"state":"flying"}'
                     flight.sendto(frame, bridge_flight_endpoint)

@@ -4,6 +4,8 @@ import java.lang.reflect.Proxy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -182,40 +184,41 @@ final class StationTests {
     }
 
     @Test
-    void jumpRequestsRequireAssignmentReadinessAndCooldown() throws Exception {
+    void desktopInputRequiresAssignmentAndDesktopMode() throws Exception {
         Player player = player("desktop", "10.1.10.111");
         StationManager manager = manager(2, 5_000, List.of(player));
+        List<StationControlRequest> controls = new ArrayList<>();
+        manager.setControlSender(controls::add);
         InetSocketAddress endpoint = endpoint("10.1.10.111", 45_101);
         manager.register(registration("bay-1", "Bay 1", endpoint, System.nanoTime()));
         assertTrue(manager.assignAutomatically(player).startsWith("assigned "));
 
-        JumpRequestResult waiting = manager.requestJump(player.getUniqueId(), 10_000L);
-        assertFalse(waiting.accepted(), "a jump cannot be requested before ready telemetry");
-
-        byte[] preparing = ProtocolV2Tests.frame(1, FlightState.PREPARING, null);
-        manager.acceptFrame(endpoint, preparing, preparing.length, System.nanoTime());
-        JumpRequestResult accepted = manager.requestJump(player.getUniqueId(), 20_000L);
-        assertTrue(accepted.accepted());
-        assertEquals("bay-1", accepted.request().stationId());
-        assertTrue(accepted.request().toJson().contains("\"action\":\"forceJumpEvent\""));
-
-        JumpRequestResult duplicate = manager.requestJump(player.getUniqueId(), 20_000L + 1_000_000_000L);
-        assertFalse(duplicate.accepted(), "repeated key presses are suppressed server-side");
-        assertTrue(duplicate.message().contains("cooldown"));
+        assertFalse(manager.forwardDesktopInput(player.getUniqueId(), JumpDesktopInput.neutral()));
+        manager.setMode(player.getUniqueId(), PlayerControlMode.FLIGHT_DESKTOP);
+        assertTrue(manager.forwardDesktopInput(
+                player.getUniqueId(), new JumpDesktopInput(1, -1, 4, 20, true)));
+        assertEquals(1, controls.size());
+        String json = controls.getFirst().toJson();
+        assertTrue(json.contains("\"action\":\"desktopInput\""));
+        assertTrue(json.contains("\"jump\":true"));
     }
 
     @Test
     void clientControlPayloadValidationIsExact() {
         assertEquals(JumpControlProtocol.TOGGLE_MODE,
                 JumpControlProtocol.decode(new byte[] {1, 1}));
-        assertEquals(JumpControlProtocol.REQUEST_JUMP,
-                JumpControlProtocol.decode(new byte[] {1, 2}));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> JumpControlProtocol.decode(new byte[] {1}));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> JumpControlProtocol.decode(new byte[] {2, 1}));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> JumpControlProtocol.decode(new byte[] {1, 3}));
+
+        ByteBuffer input = ByteBuffer.allocate(18).order(ByteOrder.BIG_ENDIAN);
+        input.put((byte) 1).putFloat(1).putFloat(-1).putFloat(5).putFloat(20).put((byte) 1);
+        JumpDesktopInput decoded = JumpDesktopInput.decode(input.array());
+        assertEquals(1.0, decoded.forward());
+        assertTrue(decoded.jump());
     }
 
     private static Thread sender(

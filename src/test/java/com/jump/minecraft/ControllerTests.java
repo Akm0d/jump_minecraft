@@ -27,6 +27,7 @@ public final class ControllerTests {
         OrderedFrameStore frames = new OrderedFrameStore();
         FlightController controller = controller(player, frames, 1_000);
         controller.arm(player.proxy);
+        controller.setMode(player.id, PlayerControlMode.FLIGHT);
 
         offer(frames, 1, FlightState.JUMPING, new Vec3(100, 100, 100), new Vec3(0, 0, 1));
         controller.tick();
@@ -71,6 +72,7 @@ public final class ControllerTests {
         OrderedFrameStore resetFrames = new OrderedFrameStore();
         FlightController resetController = controller(player, resetFrames, 1_000);
         resetController.arm(player.proxy);
+        resetController.setMode(player.id, PlayerControlMode.FLIGHT);
         offer(resetFrames, 1, FlightState.JUMPING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
         resetController.tick();
         offer(resetFrames, 2, FlightState.PREPARING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
@@ -80,6 +82,7 @@ public final class ControllerTests {
         OrderedFrameStore staleFrames = new OrderedFrameStore();
         FlightController staleController = controller(player, staleFrames, 1);
         staleController.arm(player.proxy);
+        staleController.setMode(player.id, PlayerControlMode.FLIGHT);
         offer(staleFrames, 3, FlightState.JUMPING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
         staleController.tick();
         FlightFrame stale = frame(4, FlightState.FLYING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
@@ -91,6 +94,7 @@ public final class ControllerTests {
         OrderedFrameStore resetStreamFrames = new OrderedFrameStore();
         FlightController resetStreamController = controller(player, resetStreamFrames, 1_000);
         resetStreamController.arm(player.proxy);
+        resetStreamController.setMode(player.id, PlayerControlMode.FLIGHT);
         offer(resetStreamFrames, 5, FlightState.JUMPING, new Vec3(0, 0, 0), new Vec3(0, 0, 1));
         resetStreamController.tick();
         assertFalse(player.gravity, "launch engages Minecraft control before stream reset");

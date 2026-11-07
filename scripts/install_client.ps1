@@ -8,6 +8,8 @@ param(
     [string]$FlightHost = "127.0.0.1",
     [ValidateRange(1, 65535)]
     [int]$FlightPort = 1201,
+    [switch]$EnableDesktopSimulation,
+    [switch]$EnableCollisionFeedback,
     [string]$MinecraftVersion = "26.3",
     [string]$FabricLoaderVersion = "0.20.1",
     [string]$FabricInstallerVersion = "1.1.2",
@@ -25,6 +27,9 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$script:DesktopOptionSpecified = $PSBoundParameters.ContainsKey("EnableDesktopSimulation")
+$script:CollisionOptionSpecified = $PSBoundParameters.ContainsKey("EnableCollisionFeedback")
+$script:FlightPortSpecified = $PSBoundParameters.ContainsKey("FlightPort")
 
 $script:AppRoot = Join-Path $env:LOCALAPPDATA "JUMP Minecraft"
 $script:CacheRoot = Join-Path $script:AppRoot "cache"
@@ -569,13 +574,42 @@ function Install-StationBridge {
     New-Item -ItemType Directory -Force -Path $script:BridgeRoot | Out-Null
     Copy-Item -LiteralPath $source -Destination $script:BridgeScript -Force
     $stationId = Get-StationId
+    $desktopInputEnabled = [bool]$EnableDesktopSimulation
+    $collisionFeedbackEnabled = [bool]$EnableCollisionFeedback
+    $bridgeFlightPort = $FlightPort
+    if (Test-Path -LiteralPath $script:BridgeConfig) {
+        try {
+            $existingConfiguration = Get-Content -LiteralPath $script:BridgeConfig -Raw | ConvertFrom-Json
+            $desktopInputProperty = $existingConfiguration.PSObject.Properties["enableDesktopInput"]
+            if (-not $script:DesktopOptionSpecified -and $desktopInputProperty) {
+                $desktopInputEnabled = [bool]$desktopInputProperty.Value
+            }
+            $collisionFeedbackProperty = $existingConfiguration.PSObject.Properties["enableCollisionFeedback"]
+            if (-not $script:CollisionOptionSpecified -and $collisionFeedbackProperty) {
+                $collisionFeedbackEnabled = [bool]$collisionFeedbackProperty.Value
+            }
+            if (-not $script:FlightPortSpecified -and $existingConfiguration.flightPort) {
+                $bridgeFlightPort = [int]$existingConfiguration.flightPort
+            }
+        } catch {
+            Write-Notice "Existing station bridge options could not be preserved; safe defaults will be used."
+        }
+    }
+    if ($collisionFeedbackEnabled -and -not $desktopInputEnabled) {
+        throw "Collision feedback requires -EnableDesktopSimulation."
+    }
+    if (($desktopInputEnabled -or $collisionFeedbackEnabled) -and $bridgeFlightPort -eq 1201) {
+        throw "Desktop simulation requires an isolated FLIGHT input port, never production port 1201."
+    }
     $configuration = [ordered]@{
         stationId = $stationId
         stationName = $StationName
         paperHost = $PaperHost
         paperPort = $PaperPort
         flightHost = $FlightHost
-        flightPort = $FlightPort
+        flightPort = $bridgeFlightPort
+        enableDesktopInput = $desktopInputEnabled
+        enableCollisionFeedback = $collisionFeedbackEnabled
         registrationIntervalSeconds = 1
         healthPath = $script:BridgeHealth
         updatedUtc = [DateTime]::UtcNow.ToString("o")
@@ -813,6 +847,12 @@ try {
     }
     Assert-ServerAddress $MinecraftServer
     Assert-ServerAddress $PaperHost
+    if ($EnableCollisionFeedback -and -not $EnableDesktopSimulation) {
+        throw "-EnableCollisionFeedback requires -EnableDesktopSimulation."
+    }
+    if (($EnableDesktopSimulation -or $EnableCollisionFeedback) -and $FlightPort -eq 1201) {
+        throw "Desktop simulation requires an isolated FLIGHT input port, never production port 1201."
+    }
     Write-Step "Minecraft $MinecraftVersion / Fabric $FabricLoaderVersion / Vivecraft $VivecraftVersion"
     $versions = Confirm-UpstreamVersions
     $launcher = Install-OfficialLauncher

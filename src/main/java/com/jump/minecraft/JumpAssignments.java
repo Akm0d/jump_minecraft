@@ -4,16 +4,19 @@ import java.util.List;
 import org.bukkit.Server;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 
 final class JumpAssignments {
     private final Server server;
     private final StationManager stations;
     private final StationRegistryServer registry;
+    private final Plugin plugin;
 
-    JumpAssignments(Server server, StationManager stations, StationRegistryServer registry) {
+    JumpAssignments(Server server, StationManager stations, StationRegistryServer registry, Plugin plugin) {
         this.server = server;
         this.stations = stations;
         this.registry = registry;
+        this.plugin = plugin;
     }
 
     boolean showStatus(CommandSender sender) {
@@ -56,6 +59,27 @@ final class JumpAssignments {
         } else {
             stations.unassignAll("operator disarmed all stations");
             sender.sendMessage("JUMP: all station assignments were cleared");
+        }
+        return true;
+    }
+
+    boolean mode(CommandSender sender, String[] args) {
+        if (args.length != 3) {
+            sender.sendMessage("Usage: /jump mode <online-player> <minecraft|flight|desktop>");
+            return true;
+        }
+        Player player = server.getPlayerExact(args[1]);
+        if (player == null) {
+            sender.sendMessage("Player is not online: " + args[1]);
+            return true;
+        }
+        try {
+            PlayerControlMode mode = PlayerControlMode.fromCommand(args[2]);
+            sender.sendMessage("JUMP: " + stations.setMode(player.getUniqueId(), mode));
+            PlayerControlMode active = stations.mode(player.getUniqueId());
+            if (active != null) JumpModeProtocol.send(plugin, player, active);
+        } catch (IllegalArgumentException error) {
+            sender.sendMessage("JUMP: " + error.getMessage());
         }
         return true;
     }

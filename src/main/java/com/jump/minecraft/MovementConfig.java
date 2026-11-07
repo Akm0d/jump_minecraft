@@ -10,7 +10,10 @@ public record MovementConfig(
         int maxConcurrentChunkLoads,
         int maxRetainedChunks,
         boolean collisionObservationEnabled,
-        double collisionMaxDistanceBlocks) {
+        double collisionMaxDistanceBlocks,
+        boolean collisionFeedbackEnabled,
+        double collisionResponseAcceleration,
+        long collisionFeedbackIntervalMillis) {
 
     public MovementConfig(
             long staleAfterMillis,
@@ -18,7 +21,7 @@ public record MovementConfig(
             double headingOffsetDegrees,
             double maxStepBlocks) {
         this(staleAfterMillis, blocksPerMeter, headingOffsetDegrees, maxStepBlocks,
-                6, 12, 8, 48, true, 32.0);
+                6, 12, 8, 48, true, 32.0, false, 20.0, 100);
     }
 
     public MovementConfig {
@@ -41,6 +44,12 @@ public record MovementConfig(
         }
         if (!(collisionMaxDistanceBlocks > 0.0) || !Double.isFinite(collisionMaxDistanceBlocks)) {
             throw new IllegalArgumentException("Collision observation distance must be finite and positive");
+        }
+        if (!(collisionResponseAcceleration > 0.0) || !Double.isFinite(collisionResponseAcceleration)) {
+            throw new IllegalArgumentException("Collision response acceleration must be finite and positive");
+        }
+        if (collisionFeedbackIntervalMillis < 20L) {
+            throw new IllegalArgumentException("Collision feedback interval must be at least 20 ms");
         }
     }
 }

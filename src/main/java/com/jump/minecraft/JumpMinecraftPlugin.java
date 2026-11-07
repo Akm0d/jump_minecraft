@@ -38,20 +38,25 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
                     stations,
                     message -> getLogger().info(message),
                     message -> getLogger().warning(message));
+            stations.setControlSender(request -> registry.sendControl(request));
 
             PluginCommand command = Objects.requireNonNull(getCommand("jump"), "Missing jump command");
-            JumpCommand executor = new JumpCommand(getServer(), stations, registry);
+            JumpCommand executor = new JumpCommand(getServer(), stations, registry, this);
             command.setExecutor(executor);
             command.setTabCompleter(new JumpTabCompleter(getServer(), stations));
             getServer().getPluginManager().registerEvents(new StationPlayerListener(stations), this);
-            controls = new JumpControlChannel(stations, registry);
+            controls = new JumpControlChannel(stations, this);
             getServer().getMessenger().registerIncomingPluginChannel(
                     this, JumpControlProtocol.CHANNEL, controls);
+            getServer().getMessenger().registerIncomingPluginChannel(
+                    this, JumpDesktopInput.CHANNEL, controls);
+            getServer().getMessenger().registerOutgoingPluginChannel(this, JumpModeProtocol.CHANNEL);
             tickTask = getServer().getScheduler().runTaskTimer(this, stations::tick, 1L, 1L);
             registry.start();
             getLogger().info(
-                    "JUMP Minecraft multi-station v1/v2 telemetry enabled; "
-                            + "desktop jump requests available, collision feedback disabled.");
+                    "JUMP Minecraft multi-station v1/v2 telemetry and three-mode controls enabled; "
+                            + "collision feedback "
+                            + (movement.collisionFeedbackEnabled() ? "configured" : "disabled") + ".");
         } catch (RuntimeException | IOException error) {
             getLogger().log(Level.SEVERE, "Could not start JUMP bridge", error);
             closeResources();
@@ -76,10 +81,6 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
     }
 
     private MovementConfig loadMovementConfig() {
-        if (getConfig().getBoolean("collision.feedback-enabled", false)) {
-            throw new IllegalArgumentException(
-                    "collision.feedback-enabled is not available until desktop validation is complete");
-        }
         return new MovementConfig(
                 positiveLong("flight.stale-after-millis"),
                 positiveDouble("movement.blocks-per-meter"),
@@ -90,7 +91,10 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
                 getConfig().getInt("movement.max-concurrent-chunk-loads", 8),
                 getConfig().getInt("movement.max-retained-chunks", 48),
                 getConfig().getBoolean("collision.observation-enabled", true),
-                positiveDouble("collision.max-distance-blocks"));
+                positiveDouble("collision.max-distance-blocks"),
+                getConfig().getBoolean("collision.feedback-enabled", false),
+                positiveDouble("collision.response-acceleration"),
+                positiveLong("collision.feedback-interval-millis"));
     }
 
     private long positiveLong(String path) {
@@ -113,6 +117,8 @@ public final class JumpMinecraftPlugin extends JavaPlugin {
             tickTask = null;
         }
         getServer().getMessenger().unregisterIncomingPluginChannel(this, JumpControlProtocol.CHANNEL);
+        getServer().getMessenger().unregisterIncomingPluginChannel(this, JumpDesktopInput.CHANNEL);
+        getServer().getMessenger().unregisterOutgoingPluginChannel(this, JumpModeProtocol.CHANNEL);
         controls = null;
         if (registry != null) {
             registry.close();

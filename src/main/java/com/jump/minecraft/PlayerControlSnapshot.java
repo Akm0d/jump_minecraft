@@ -46,20 +46,22 @@ final class PlayerControlSnapshot {
         player.setFallDistance(0.0f);
     }
 
-    void engageFree(Player player) {
-        protect(player);
+    void engageMinecraft(Player player) {
+        player.setInvulnerable(invulnerable);
         player.setGravity(gravity);
         player.setNoPhysics(noPhysics);
         player.setCollidable(collidable);
-        player.setFlying(false);
+        player.setFlying(flying && allowFlight);
         player.setAllowFlight(allowFlight);
         player.setVelocity(new Vector());
         player.setFallDistance(0.0f);
+        player.setFireTicks(fireTicks);
+        player.setFreezeTicks(freezeTicks);
+        player.setRemainingAir(remainingAir);
     }
 
     void enforce(Player player, PlayerControlMode mode) {
-        if (mode == PlayerControlMode.FLIGHT) engageFlight(player);
-        else protect(player);
+        if (mode.isFlightControlled()) engageFlight(player);
     }
 
     private void protect(Player player) {

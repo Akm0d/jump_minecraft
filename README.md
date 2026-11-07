@@ -3,10 +3,10 @@
 JumpMinecraft lets several JUMP FLIGHT workstations drive independent players
 on one Paper server. FLIGHT remains authoritative for trajectory and lifecycle;
 Minecraft samples the newest telemetry at server tick rate and renders it.
-The only control request implemented is desktop FLIGHT's existing loopback-only
-`forceJumpEvent`; physical Navigator/OpenVR restrictions remain in FLIGHT. The
-bridge never sends calibration, canopy, landing, reset, collision-force, or
-hardware commands.
+The optional desktop-simulation path carries validated keyboard input and
+bounded terrain contacts to an isolated loopback FLIGHT test port. It is off by
+default and is refused on production port 1201. The bridge never sends physical
+launch, calibration, canopy, landing, reset, or hardware commands.
 
 The integration supports GameModule JSON v1 and the Windows x64 binary v2
 format used by current FLIGHT installations. It does not require changes to
@@ -19,7 +19,7 @@ current-user scheduled task:
 
 ```text
 FLIGHT 127.0.0.1:1201
-        ^  subscription/reply relay + validated desktop jump request
+        ^  subscription/reply relay (production-safe default)
         |
 station bridge -- outbound registration --> Paper UDP :12101
                                              |
@@ -156,8 +156,8 @@ station is ready again without a command. An active flight is never silently
 reassigned. Disconnect, kick, manual disarm, and plugin shutdown clear the
 assignment and restore saved player state.
 
-The controller captures the Minecraft anchor on `jumping` and the FLIGHT origin
-on the first flying frame. Destination and look-ahead chunks are prepared with
+The controller can anchor and render from `preparing`, then follows jumping,
+flying, canopy, and landed telemetry. Destination and look-ahead chunks are prepared with
 Paper's asynchronous chunk API under per-station and global limits. If a chunk
 is late, the player holds the last rendered position under FLIGHT protection,
 newest telemetry continues buffering, and rendering resumes automatically.
@@ -165,9 +165,9 @@ Large moves use bounded catch-up steps; no arbitrary distant chunk is
 synchronously generated on the tick thread.
 
 An assigned player remains in protected presentation through preparing,
-flight, landing, stale telemetry, and chunk delays. FLIGHT mode disables
-gravity/collision and blocks ordinary player movement. FREE mode restores local
-movement while retaining damage and interaction protection. Disconnect, kick,
+flight, landing, stale telemetry, and chunk delays. FLIGHT and FLIGHT DESKTOP
+disable gravity/collision and block ordinary player movement. MINECRAFT restores
+the saved ordinary Minecraft movement and HUD. Disconnect, kick,
 unassignment, and plugin shutdown restore the captured pre-JUMP player state.
 
 ## Windows JUMP technician installation
@@ -236,15 +236,30 @@ The companion is built and installed by `install_client.ps1` into the isolated
 JUMP profile. It uses Fabric key mappings and plugin messaging—no global
 keyboard hook or extra Windows helper.
 
-- **F1** toggles FLIGHT and FREE modes after Paper validates the player's
-  station assignment.
-- **F2** requests `forceJumpEvent` only for an assigned FLIGHT-mode player with
-  fresh `PREPARING` or `LANDED` telemetry. Paper and the bridge both suppress
-  duplicate presses; the bridge emits the final UDP datagram from loopback.
+- **F1** cycles `MINECRAFT → FLIGHT → FLIGHT DESKTOP → MINECRAFT` after Paper
+  validates the player's station assignment. The current mode appears in the
+  action bar and `/jump stations`.
+- In **MINECRAFT**, normal WASD, mouse, Space, physics, and HUD are restored.
+- In **FLIGHT**, only authoritative FLIGHT telemetry moves the player.
+- In **FLIGHT DESKTOP**, WASD and mouse are forwarded to an explicitly enabled
+  desktop FLIGHT simulation; Space is edge-triggered in the same input message.
 
-Within the dedicated profile, F1/F2 are removed from their conflicting vanilla
-bindings. Hearts, hunger, armor, experience, hotbar, held-item tooltip, and the
-crosshair are hidden; menus, chat, and operator messages remain available.
+Operators can use `/jump mode <player> <minecraft|flight|desktop>` if the client
+key mapping is unavailable.
+
+Within the dedicated profile, F1 is removed from its conflicting vanilla
+binding. Survival HUD elements and the crosshair are hidden in FLIGHT modes;
+menus, chat, operator messages, and the normal MINECRAFT HUD remain available.
+
+Desktop controls require a separately configured FLIGHT desktop-test instance
+on an isolated port. For example, after configuring FLIGHT's existing
+`desktopTestInput` test guard on port 1202:
+
+```powershell
+.\scripts\install_client.ps1 -FlightPort 1202 -EnableDesktopSimulation
+```
+
+Never enable this path against port 1201 or a physical-mode FLIGHT instance.
 
 ## Terrain collision observation
 
@@ -258,9 +273,13 @@ bounding box at lower, center, upper, and lateral points against actual block
 collision shapes for terrain and structures. This is diagnostic sampling, not
 a continuous physics solver.
 
-`collision.feedback-enabled` remains `false`. No `pushplayer` force is produced
-or sent. FLIGHT collision-response units and force construction require an
-isolated desktop-simulation validation before feedback can be enabled.
+`collision.feedback-enabled` remains `false`. When both Paper feedback and the
+station bridge's `-EnableCollisionFeedback` opt-in are enabled, Paper converts
+the nearest bounded contact to FLIGHT coordinates and sends a rate-limited
+`pushplayer` observation through that station's bridge. The bridge validates
+finite bounds and a unit normal, and refuses feedback on port 1201. Response
+acceleration, axes, and observed trajectory correction still require isolated
+desktop-simulation validation before this is enabled.
 
 ### Optional visual enhancements
 

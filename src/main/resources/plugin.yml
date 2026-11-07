@@ -7,7 +7,7 @@ authors: [JUMP]
 commands:
   jump:
     description: Inspect or troubleshoot JUMP station assignments.
-    usage: /jump <status|stations|assign <station> <player>|disarm [station]>
+    usage: /jump <status|stations|assign <station> <player>|arm [player]|mode <player> <minecraft|flight|desktop>|disarm [station]>
     permission: jump.control
 permissions:
   jump.control:

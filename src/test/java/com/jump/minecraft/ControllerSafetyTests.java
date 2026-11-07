@@ -17,18 +17,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ControllerSafetyTests {
     @Test
-    void freeModeKeepsProtectionAndFlightModeRebasesWithoutTeleporting() {
+    void threeModesCycleAndFlightReentryRebasesWithoutTeleporting() {
         Fixture fixture = activeFlight();
-        assertEquals("mode=FREE", fixture.controller.toggleMode(fixture.player.id));
+        assertEquals("mode=FLIGHT DESKTOP", fixture.controller.toggleMode(fixture.player.id));
+        assertProtected(fixture, "FLIGHT DESKTOP");
+        assertEquals("mode=MINECRAFT", fixture.controller.toggleMode(fixture.player.id));
         assertTrue(fixture.player.gravity && !fixture.player.noPhysics,
-                "FREE restores ordinary local movement physics");
-        assertTrue(fixture.player.invulnerable, "FREE remains protected");
+                "MINECRAFT restores ordinary local movement physics");
+        assertTrue(!fixture.player.invulnerable, "MINECRAFT restores original protection state");
         assertTrue(!fixture.controller.shouldBlockMovement(fixture.player.id));
 
         offer(fixture.frames, 3, FlightState.PRE_DEPLOYED, new Vec3(0, 0, 100));
         fixture.controller.tick();
         assertEquals(0.0, fixture.player.location.getZ(), 1.0e-6,
-                "telemetry is observed but does not move a FREE player");
+                "telemetry is observed but does not move a MINECRAFT player");
         fixture.player.location = new Location(fixture.world.proxy, 0, 70, 5);
 
         assertEquals("mode=FLIGHT", fixture.controller.toggleMode(fixture.player.id));
@@ -90,6 +92,7 @@ final class ControllerSafetyTests {
         FlightController controller = new FlightController(
                 server, frames, new MovementConfig(1_000, 1.0, 0.0, 20.0), ignored -> { });
         controller.arm(player.proxy);
+        controller.setMode(player.id, PlayerControlMode.FLIGHT);
         offer(frames, 1, FlightState.JUMPING, new Vec3(0, 0, 0));
         controller.tick();
         offer(frames, 2, FlightState.FLYING, new Vec3(0, 0, 0));

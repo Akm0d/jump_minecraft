@@ -19,14 +19,18 @@ final class JumpTabCompleter implements TabCompleter {
     @Override
     public List<String> onTabComplete(
             CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length == 1) return List.of("status", "stations", "assign", "disarm", "arm");
+        if (args.length == 1) return List.of("status", "stations", "assign", "disarm", "arm", "mode");
         if (args.length == 2 && (args[0].equalsIgnoreCase("assign")
                 || args[0].equalsIgnoreCase("disarm"))) {
             return stations.stationIds();
         }
         if ((args.length == 3 && args[0].equalsIgnoreCase("assign"))
-                || (args.length == 2 && args[0].equalsIgnoreCase("arm"))) {
+                || (args.length == 2 && (args[0].equalsIgnoreCase("arm")
+                        || args[0].equalsIgnoreCase("mode")))) {
             return server.getOnlinePlayers().stream().map(Player::getName).sorted().toList();
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("mode")) {
+            return List.of("minecraft", "flight", "desktop");
         }
         return List.of();
     }

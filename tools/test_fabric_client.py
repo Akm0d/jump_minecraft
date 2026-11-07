@@ -21,9 +21,19 @@ class FabricClientInitializationTests(unittest.TestCase):
         source = CLIENT_SOURCE.read_text(encoding="utf-8")
 
         self.assertIn("PayloadTypeRegistry.serverboundPlay().register", source)
-        self.assertEqual(2, source.count("KeyMappingHelper.registerKeyMapping"))
-        self.assertIn("hideSurvivalHud();", source)
+        self.assertIn("PayloadTypeRegistry.clientboundPlay().register", source)
+        self.assertEqual(1, source.count("KeyMappingHelper.registerKeyMapping"))
+        self.assertIn("configureHud();", source)
         self.assertIn("ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);", source)
+
+    def test_three_mode_input_path_uses_focus_and_space_edge(self):
+        source = CLIENT_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("JumpDesktopInputPayload", source)
+        self.assertIn("client.mouseHandler.isMouseGrabbed()", source)
+        self.assertIn("boolean jump = space && !jumpDown;", source)
+        self.assertNotIn("REQUEST_JUMP", source)
+        self.assertNotIn("key.jump-minecraft.request_jump", source)
 
 
 if __name__ == "__main__":

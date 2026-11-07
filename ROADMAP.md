@@ -91,19 +91,18 @@ and die.
   bounded per-station/global queues and tickets. Hold the last safe rendered
   position until ready, retain newest telemetry, and resume automatically.
 - [x] Bound large trajectory catch-up and preserve independent station state.
-- [x] Add explicit FLIGHT/FREE modes. FLIGHT blocks local motion and disables
-  gravity/collision; FREE permits ordinary movement while retaining immortality
-  and dedicated-experience interaction restrictions.
-- [x] Compile a Minecraft 26.3 Fabric companion with F1/F2 controls and survival
+- [x] Add explicit MINECRAFT/FLIGHT/FLIGHT DESKTOP modes. The two FLIGHT modes
+  block Minecraft physics; MINECRAFT restores captured ordinary controls.
+- [x] Compile a Minecraft 26.3 Fabric companion with F1 cycling and survival
   HUD suppression; integrate its build, Fabric API, and upgrade/validation into
   the existing installer.
-- [x] Route validated, cooldown-protected F2 requests through Paper to the
-  assigned bridge and emit only desktop FLIGHT's `forceJumpEvent` from loopback.
+- [x] Route validated, station-specific desktop WASD/mouse and edge-triggered
+  Space input through Paper and the bridge to FLIGHT's guarded test interface.
 - [x] Keep the Windows bridge registering and retrying when local FLIGHT UDP is
   temporarily unavailable; report a degraded health state instead of exiting.
-- [x] Add observation-only Paper block-shape collision diagnostics and inverse
-  coordinate mapping. Collision feedback remains disabled.
-- [ ] Exercise the new chunk protection, F1/F2, HUD, bridge recovery, and repeat
+- [x] Add Paper block-shape collision observations, inverse coordinate mapping,
+  and an explicitly disabled/rate-limited `pushplayer` bridge path.
+- [ ] Exercise the new chunk protection, three modes, HUD, bridge recovery, and repeat
   landing behavior on Windows with a real Minecraft client.
 
 ## P2 — Three-station concurrency
@@ -138,9 +137,10 @@ and die.
   isolated desktop FLIGHT simulation.
 - [ ] Derive and validate `pushplayer` force units against FLIGHT/Unreal behavior;
   do not infer a force from contact geometry alone.
-- [ ] Only after that evidence, implement explicitly enabled, rate-limited,
-  per-station feedback. Never enable feedback for physical-mode FLIGHT without
-  separate facility approval.
+- [x] Implement explicitly enabled, rate-limited, per-station feedback with
+  bridge validation and a hard refusal on production port 1201.
+- [ ] Validate it in isolated desktop FLIGHT before enabling it; never enable
+  feedback for physical-mode FLIGHT without separate facility approval.
 
 ## Optional visual enhancements
 

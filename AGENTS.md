@@ -9,8 +9,8 @@ not a replacement physics engine.
 
 Do not add world management, custom landing zones, launchpads, or Minecraft-
 owned flight mechanics. The approved scope includes the minimal Fabric
-companion and observation-only terrain collision diagnostics. Collision-force
-feedback remains disabled until separately validated.
+companion and bounded terrain collision feedback. Feedback remains disabled by
+default until separately validated in isolated desktop simulation.
 
 The adjacent `/home/akmod/code/jump_flight` repository is reference material
 only. Never modify it from this project. Verify protocol conclusions against
@@ -24,11 +24,11 @@ its source rather than relying solely on `analysis.md`.
 - `src/test/`: JUnit tests, including Paper controller tests.
 - `tools/synthetic_flight.py`: deterministic JUMP UDP v1 synthetic sender.
 - `tools/test_synthetic_flight.py`: synthetic protocol tests.
-- `fabric-client/`: dedicated Fabric F1/F2 controls and HUD presentation.
+- `fabric-client/`: dedicated Fabric F1 mode cycling, desktop input, and HUD presentation.
 - `scripts/install_client.ps1`: idempotent Windows Minecraft/Fabric/Vivecraft/
   companion setup entry point.
 - `scripts/flight_udp_relay.ps1`: private station bridge for registration,
-  loopback-bound FLIGHT telemetry, and validated desktop jump requests.
+  loopback-bound FLIGHT telemetry, guarded desktop input, and collision feedback.
 - `tools/test_flight_relay.py`: relay integration test; set `POWERSHELL` when
   PowerShell is not on `PATH`.
 - `analysis.md`: source-backed architecture and feasibility investigation.
@@ -41,8 +41,8 @@ its source rather than relying solely on `analysis.md`.
 Follow `ROADMAP.md` in milestone order. Facility testing on 2026-11-06 verified
 live v2 decoding, registration, automatic assignment, and a lifecycle through
 `LANDED`; it also exposed unsafe release on an unloaded destination chunk. The
-active milestone is continuous protected rendering plus F1/F2 client controls.
-Windows/Vivecraft validation of those new controls remains outstanding.
+active milestone is the three-mode desktop MVP. Windows/Vivecraft and isolated
+desktop-FLIGHT validation of those controls remains outstanding.
 
 Before requesting deployment, confirm the intended source revision, rebuild the
 JAR, run all required tests, record its SHA-256, and prepare exact backup and
@@ -98,10 +98,10 @@ compatible `api-version` and the `/jump` command registration.
 
 The plugin supports JUMP GameModule UDP v1 JSON and Windows x64 binary v2.
 Subscription heartbeats contain only `findex`, `expiresInSeconds`, and
-`helicopterFlag: false`. The only control is desktop FLIGHT's existing
-`forceJumpEvent`, routed to loopback after assignment/readiness validation. Do
-not fabricate physical launch, readiness, calibration, reset, collision force,
-canopy, landing, or hardware commands.
+`helicopterFlag: false`. Guarded desktop input and bounded `pushplayer` feedback
+may be routed only to an explicitly enabled, isolated loopback test port; both
+are refused on production port 1201. Do not fabricate physical launch,
+readiness, calibration, reset, canopy, landing, or hardware commands.
 
 The optional relay exists only when Paper cannot directly reach a loopback-bound
 FLIGHT service. Keep these properties intact:

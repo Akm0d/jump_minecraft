@@ -24,7 +24,10 @@ movement:
   max-retained-chunks: 48
 
 collision:
-  # Observation uses Paper block collision geometry but never sends feedback to FLIGHT.
+  # Feedback is for explicitly isolated desktop FLIGHT simulation only. The station
+  # bridge also refuses it unless its matching opt-in is enabled on a non-1201 port.
   observation-enabled: true
   feedback-enabled: false
   max-distance-blocks: 32.0
+  response-acceleration: 20.0
+  feedback-interval-millis: 100

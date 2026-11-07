@@ -5,12 +5,13 @@ import org.bukkit.Server;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.plugin.Plugin;
 
 final class JumpCommand implements CommandExecutor {
     private final JumpAssignments assignments;
 
-    JumpCommand(Server server, StationManager stations, StationRegistryServer registry) {
-        assignments = new JumpAssignments(server, stations, registry);
+    JumpCommand(Server server, StationManager stations, StationRegistryServer registry, Plugin plugin) {
+        assignments = new JumpAssignments(server, stations, registry, plugin);
     }
 
     @Override
@@ -21,6 +22,7 @@ final class JumpCommand implements CommandExecutor {
             case "assign" -> assignments.assign(sender, args);
             case "arm" -> assignments.armCompatibility(sender, args);
             case "disarm" -> assignments.disarm(sender, args);
+            case "mode" -> assignments.mode(sender, args);
             default -> false;
         };
     }
