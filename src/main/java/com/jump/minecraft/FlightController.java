@@ -11,6 +11,8 @@ import org.bukkit.util.Vector;
 import net.kyori.adventure.text.Component;
 
 public final class FlightController {
+    private static final double STATIONARY_POSITION_EPSILON_SQUARED = 1.0e-12;
+
     private final String stationId;
     private final Server server;
     private final OrderedFrameStore frames;
@@ -281,6 +283,7 @@ public final class FlightController {
         }
 
         Location step = ChunkPath.boundedStep(current, mapped, maxStepBlocks);
+        preserveCameraLook(current, step);
         List<ChunkPosition> upcoming = ChunkPath.upcoming(
                 current, step, previousMappedTarget, mapped, preloadLookaheadSteps, maxChunksPerStation);
         ChunkPosition required = ChunkPosition.of(step.getX(), step.getZ());
@@ -300,6 +303,8 @@ public final class FlightController {
         updateCollisionFeedback(frame, collision);
         player.setVelocity(new Vector());
         player.setFallDistance(0.0f);
+        previousMappedTarget = mapped;
+        if (skipStationaryTeleport(frame, current, step)) return true;
         boolean moved;
         teleportingPlayer = player.getUniqueId();
         try {
@@ -307,7 +312,6 @@ public final class FlightController {
         } finally {
             teleportingPlayer = null;
         }
-        previousMappedTarget = mapped;
         if (!moved) {
             lastNote = "Paper rejected teleport; holding protected position";
             return false;
@@ -316,6 +320,17 @@ public final class FlightController {
                 ? "rendering bounded catch-up toward frame #" + frame.findex()
                 : "rendered frame #" + frame.findex();
         return !catchingUp;
+    }
+
+    private void preserveCameraLook(Location current, Location step) {
+        step.setYaw(current.getYaw());
+        step.setPitch(current.getPitch());
+    }
+
+    private boolean skipStationaryTeleport(FlightFrame frame, Location current, Location step) {
+        if (current.distanceSquared(step) > STATIONARY_POSITION_EPSILON_SQUARED) return false;
+        lastNote = "stationary frame #" + frame.findex() + "; teleport skipped";
+        return true;
     }
 
     private boolean withinWorld(World world, Location location) {

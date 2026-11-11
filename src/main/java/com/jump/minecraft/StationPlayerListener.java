@@ -1,5 +1,6 @@
 package com.jump.minecraft;
 
+import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -45,9 +46,14 @@ final class StationPlayerListener implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        if (stations.shouldBlockMovement(event.getPlayer().getUniqueId())) {
-            event.setTo(event.getFrom());
-        }
+        if (!stations.shouldBlockMovement(event.getPlayer().getUniqueId())) return;
+        Location requested = event.getTo();
+        if (requested == null || !event.hasChangedPosition()) return;
+
+        Location constrained = event.getFrom().clone();
+        constrained.setYaw(requested.getYaw());
+        constrained.setPitch(requested.getPitch());
+        event.setTo(constrained);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
